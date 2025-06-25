@@ -1,0 +1,157 @@
+[
+  {
+    "broker": "icmarkets",
+    "terminal_path": "C:/MT5/ICMarkets/terminal64.exe",
+    "symbols": [
+      {
+        "internal": "BTCUSD",
+        "broker_symbol": "BTCUSD",
+        "type": "crypto"
+      },
+      {
+        "internal": "US100",
+        "broker_symbol": "USTEC",
+        "type": "index.us"
+      },
+      {
+        "internal": "US30",
+        "broker_symbol": "US30",
+        "type": "index.us"
+      },
+      {
+        "internal": "GER40",
+        "broker_symbol": "DE40",
+        "type": "index.eu"
+      },
+      {
+        "internal": "JP225",
+        "broker_symbol": "JP225",
+        "type": "index.as"
+      }
+    ]
+  },
+  {
+    "broker": "exness",
+    "terminal_path": "C:/MT5/Exness/terminal64.exe",
+    "symbols": [
+      {
+        "internal": "BTCUSD",
+        "broker_symbol": "BTCUSDm",
+        "type": "crypto"
+      },
+      {
+        "internal": "US100",
+        "broker_symbol": "USTECm",
+        "type": "index.us"
+      },
+      {
+        "internal": "US30",
+        "broker_symbol": "US30m",
+        "type": "index.us"
+      },
+      {
+        "internal": "GER40",
+        "broker_symbol": "DE30m",
+        "type": "index.eu"
+      },
+      {
+        "internal": "JP225",
+        "broker_symbol": "JP225m",
+        "type": "index.as"
+      }
+    ]
+  },
+  {
+    "broker": "fxtm",
+    "terminal_path": "C:/MT5/FXTM/terminal64.exe",
+    "symbols": [
+      {
+        "internal": "BTCUSD",
+        "broker_symbol": "BITCOIN",
+        "type": "crypto"
+      },
+      {
+        "internal": "US100",
+          "broker_symbol": "NAS100",
+          "type": "index.us"
+      },
+      {
+        "internal": "US30",
+        "broker_symbol": "US30",
+        "type": "index.us"
+      },
+      {
+        "internal": "GER40",
+        "broker_symbol": "GER40",
+        "type": "index.eu"
+      },
+      {
+        "internal": "JP225",
+        "broker_symbol": "JP225",
+        "type": "index.as"
+      }
+    ]
+  },
+  {
+    "broker": "eightcap",
+    "terminal_path": "C:/MT5/Eightcap/terminal64.exe",
+    "symbols": [
+      {
+        "internal": "BTCUSD",
+        "broker_symbol": "BTCUSD",
+        "type": "crypto"
+      },
+      {
+        "internal": "US100",
+        "broker_symbol": "NDX100",
+        "type": "index.us"
+      },
+      {
+        "internal": "US30",
+        "broker_symbol": "US30",
+        "type": "index.us"
+      },
+      {
+        "internal": "GER40",
+        "broker_symbol": "GER40",
+        "type": "index.eu"
+      },
+      {
+        "internal": "JP225",
+        "broker_symbol": "JPN225",
+        "type": "index.as"
+      }
+    ]
+  },
+  {
+    "broker": "xm",
+    "terminal_path": "C:/MT5/XM/terminal64.exe",
+    "symbols": [
+      {
+        "internal": "BTCUSD",
+        "broker_symbol": "BTCUSD#",
+        "type": "crypto"
+      },
+      {
+        "internal": "US100",
+        "broker_symbol": "US100Cash",
+        "type": "index.us"
+      },
+      {
+        "internal": "US30",
+        "broker_symbol": "US30Cash",
+        "type": "index.us"
+      },
+      {
+        "internal": "GER40",
+        "broker_symbol": "GER40Cash",
+        "type": "index.eu"
+      },
+      {
+        "internal": "JP225",
+        "broker_symbol": "JP225Cash",
+        "type": "index.as"
+      }
+    ]
+  }
+]
