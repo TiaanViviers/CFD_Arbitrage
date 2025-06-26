@@ -2,13 +2,13 @@ import MetaTrader5 as mt5
 import threading
 from datetime import datetime, UTC
 import time
-import logging
 
 class MT5BrokerInterface:
-    def __init__(self, name, path, logger=None):
+    def __init__(self, name, path, symbol, logger):
         self.name = name
         self.path = path
-        self.logger = logger or logging.getLogger(__name__)
+        self.symbol = symbol
+        self.logger = logger
         self._lock = threading.Lock()
         self.connect()
 
@@ -39,12 +39,12 @@ class MT5BrokerInterface:
                 self.logger.error(f"[{self.name}] Error during MT5 shutdown: {e}")
 
 
-    def get_latest_tick(self, symbol):
+    def get_latest_tick(self):
         with self._lock:
             try:
-                tick = mt5.symbol_info_tick(symbol)
+                tick = mt5.symbol_info_tick(self.symbol)
                 if tick is None:
-                    self.logger.warning(f"[{self.name}] No tick data available for {symbol}.")
+                    self.logger.warning(f"[{self.name}] No tick data available for {self.symbol}.")
                     return None
                 return {
                     "timestamp": datetime.now(UTC).isoformat(),
@@ -52,23 +52,23 @@ class MT5BrokerInterface:
                     "ask": tick.ask,
                 }
             except Exception as e:
-                self.logger.error(f"[{self.name}] Exception when fetching tick for {symbol}: {e}")
+                self.logger.error(f"[{self.name}] Exception when fetching tick for {self.symbol}: {e}")
                 return None
         
 
-    def is_trade_possible(self, symbol):
+    def is_trade_possible(self):
         with self._lock:
             try:
-                info = mt5.symbol_info(symbol)
+                info = mt5.symbol_info(self.symbol)
                 if info is None:
-                    self.logger.warning(f"[{self.name}] Failed to get symbol info for {symbol}")
+                    self.logger.warning(f"[{self.name}] Failed to get symbol info for {self.symbol}")
                     return False
                 if not info.trade_allowed:
-                    self.logger.info(f"[{self.name}] Trading is currently NOT allowed on {symbol}.")
+                    self.logger.info(f"[{self.name}] Trading is currently NOT allowed on {self.symbol}.")
                     return False
                 return True
             except Exception as e:
-                self.logger.error(f"[{self.name}] Exception checking trade possible for {symbol}: {e}")
+                self.logger.error(f"[{self.name}] Exception checking trade possible for {self.symbol}: {e}")
                 return False
         
 
@@ -91,8 +91,7 @@ class MT5BrokerInterface:
             return None
         
     
-    def place_order(self, symbol, side, lots, price=None, sl=None, tp=None, 
-                    deviation=20, magic=1000, comment=''):
+    def place_order(self, side, lots, price=None, sl=None, tp=None, deviation=20, magic=1000, comment=''):
         with self._lock:
             type_map = {'buy': mt5.ORDER_TYPE_BUY, 'sell': mt5.ORDER_TYPE_SELL}
             if side not in type_map:
@@ -100,9 +99,9 @@ class MT5BrokerInterface:
                 return None
 
             try:
-                tick = mt5.symbol_info_tick(symbol)
+                tick = mt5.symbol_info_tick(self.symbol)
                 if tick is None:
-                    self.logger.error(f"[{self.name}] Failed to fetch tick data for {symbol}.")
+                    self.logger.error(f"[{self.name}] Failed to fetch tick data for {self.symbol}.")
                     return None
 
                 exec_price = price
@@ -113,51 +112,45 @@ class MT5BrokerInterface:
                         exec_price = tick.bid
                     else:
                         self.logger.error(
-                            f"[{self.name}] Invalid tick data for {symbol}: bid={tick.bid}, ask={tick.ask}"
+                            f"[{self.name}] Invalid tick data for {self.symbol}: bid={tick.bid}, ask={tick.ask}"
                         )
                         return None
 
                 request = {
-                    "action": mt5.TRADE_ACTION_DEAL,
-                    "symbol": symbol,
-                    "volume": lots,
-                    "type": type_map[side],
-                    "price": exec_price,
-                    "sl": sl,
-                    "tp": tp,
-                    "deviation": deviation,
-                    "magic": magic,
-                    "comment": comment,
-                    "type_time": mt5.ORDER_TIME_GTC,
+                    "action": mt5.TRADE_ACTION_DEAL, "symbol": self.symbol,
+                    "volume": lots, "type": type_map[side],
+                    "price": exec_price, "sl": sl, "tp": tp,
+                    "deviation": deviation, "magic": magic,
+                    "comment": comment, "type_time": mt5.ORDER_TIME_GTC,
                     "type_filling": mt5.ORDER_FILLING_IOC,
                 }
 
-                self.logger.info(f"[{self.name}] Sending order: {side} {lots} {symbol} @ {exec_price}")
+                self.logger.info(f"[{self.name}] Sending order: {side} {lots} {self.symbol} @ {exec_price}")
                 result = mt5.order_send(request)
 
                 if result is None:
-                    self.logger.error(f"[{self.name}] order_send() returned None for {symbol}.")
+                    self.logger.error(f"[{self.name}] order_send() returned None for {self.symbol}.")
                     return None
 
                 if result.retcode != mt5.TRADE_RETCODE_DONE:
                     self.logger.error(
-                        f"[{self.name}] Order failed for {symbol}: {result.comment} (retcode={result.retcode})"
+                        f"[{self.name}] Order failed for {self.symbol}: {result.comment} (retcode={result.retcode})"
                     )
                     return result
 
                 self.logger.info(
-                    f"[{self.name}] Order placed: {side} {lots} {symbol} @ {exec_price} (ticket: {result.order})"
+                    f"[{self.name}] Order placed: {side} {lots} {self.symbol} @ {exec_price} (ticket: {result.order})"
                 )
                 return result
 
             except Exception as e:
                 self.logger.error(
-                    f"[{self.name}] Exception during order placement for {symbol}: {e}", exc_info=True
+                    f"[{self.name}] Exception during order placement for {self.symbol}: {e}", exc_info=True
                 )
                 return None
             
 
-    def close_position(self, symbol, ticket=None, volume=None, deviation=20, magic=1000, comment=''):
+    def close_position(self, ticket=None, volume=None, deviation=20, magic=1000, comment=''):
         """
         Closes open position(s) for the given symbol.
         If `ticket` is provided, only that specific position is closed.
@@ -165,9 +158,9 @@ class MT5BrokerInterface:
         """
         with self._lock:
             try:
-                positions = mt5.positions_get(symbol=symbol)
+                positions = mt5.positions_get(symbol=self.symbol)
                 if positions is None or len(positions) == 0:
-                    self.logger.info(f"[{self.name}] No open positions to close for {symbol}.")
+                    self.logger.info(f"[{self.name}] No open positions to close for {self.symbol}.")
                     return True
 
                 for pos in positions:
@@ -179,16 +172,16 @@ class MT5BrokerInterface:
                     # Decide direction and price for closing
                     if pos.type == mt5.POSITION_TYPE_BUY:
                         close_type = mt5.ORDER_TYPE_SELL
-                        tick = mt5.symbol_info_tick(symbol)
+                        tick = mt5.symbol_info_tick(self.symbol)
                         if tick is None or tick.bid <= 0:
-                            self.logger.error(f"[{self.name}] No valid bid price to close BUY position {pos.ticket} on {symbol}.")
+                            self.logger.error(f"[{self.name}] No valid bid price to close BUY position {pos.ticket} on {self.symbol}.")
                             continue
                         price = tick.bid
                     elif pos.type == mt5.POSITION_TYPE_SELL:
                         close_type = mt5.ORDER_TYPE_BUY
-                        tick = mt5.symbol_info_tick(symbol)
+                        tick = mt5.symbol_info_tick(self.symbol)
                         if tick is None or tick.ask <= 0:
-                            self.logger.error(f"[{self.name}] No valid ask price to close SELL position {pos.ticket} on {symbol}.")
+                            self.logger.error(f"[{self.name}] No valid ask price to close SELL position {pos.ticket} on {self.symbol}.")
                             continue
                         price = tick.ask
                     else:
@@ -196,32 +189,47 @@ class MT5BrokerInterface:
                         continue
 
                     request = {
-                        "action": mt5.TRADE_ACTION_DEAL,
-                        "symbol": symbol,
-                        "volume": close_volume,
-                        "type": close_type,
-                        "position": pos.ticket,
-                        "price": price,
-                        "deviation": deviation,
-                        "magic": magic,
+                        "action": mt5.TRADE_ACTION_DEAL, "symbol": self.symbol,
+                        "volume": close_volume, "type": close_type,
+                        "position": pos.ticket, "price": price,
+                        "deviation": deviation, "magic": magic,
                         "comment": comment or "Auto-close",
                         "type_time": mt5.ORDER_TIME_GTC,
                         "type_filling": mt5.ORDER_FILLING_IOC,
                     }
 
-                    self.logger.info(f"[{self.name}] Closing position ticket {pos.ticket}: {close_type} {close_volume} {symbol} @ {price}")
+                    self.logger.info(
+                        f"[{self.name}] Closing position ticket {pos.ticket}: {close_type} {close_volume} {self.symbol} @ {price}"
+                    )
                     result = mt5.order_send(request)
                     if result is None:
-                        self.logger.error(f"[{self.name}] order_send() returned None while closing position {pos.ticket} on {symbol}.")
+                        self.logger.error(
+                            f"[{self.name}] order_send() returned None while closing position {pos.ticket} on {self.symbol}."
+                        )
                         return False
                     if result.retcode != mt5.TRADE_RETCODE_DONE:
-                        self.logger.error(f"[{self.name}] Failed to close position {pos.ticket}: {result.comment} (retcode={result.retcode})")
+                        self.logger.error(
+                            f"[{self.name}] Failed to close position {pos.ticket}: {result.comment} (retcode={result.retcode})"
+                        )
                         return False
-                    self.logger.info(f"[{self.name}] Closed position ticket {pos.ticket}: {close_type} {close_volume} {symbol} (order: {result.order})")
+                    self.logger.info(
+                        f"[{self.name}] Closed position ticket {pos.ticket}: {close_type} {close_volume} {self.symbol} (order: {result.order})"
+                    )
                 return True
 
             except Exception as e:
-                self.logger.error(f"[{self.name}] Exception while closing position(s) for {symbol}: {e}", exc_info=True)
+                self.logger.error(
+                    f"[{self.name}] Exception while closing position(s) for {self.symbol}: {e}", exc_info=True
+                )
                 return False
 
 
+    def __repr__(self):
+        return (
+            f"<MT5BrokerInterface("
+            f"name='{self.name}', "
+            f"path='{self.path}', "
+            f"symbol='{self.symbol}', "
+            f"logger='{self.logger.name}'"
+            f")>"
+        )
