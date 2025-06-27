@@ -12,13 +12,16 @@ class MT5BrokerInterface:
         self._lock = threading.Lock()
         self.connect()
 
-
     def connect(self, max_attempts=10):
         attempts = 0
         while attempts < max_attempts:
             with self._lock:
                 if mt5.initialize(self.path):
                     self.logger.info(f"[{self.name}] Successfully connected to MT5 terminal.")
+                    if not mt5.symbol_select(self.symbol, True):
+                        self.logger.warning(f"[{self.name}] Could not subscribe to symbol {self.symbol}")
+                    else:
+                        self.logger.info(f"[{self.name}] Subscribed to {self.symbol}")
                     return True
                 else:
                     e = mt5.last_error()

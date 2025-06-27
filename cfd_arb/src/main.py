@@ -5,6 +5,7 @@ import argparse
 
 from io_utils import load_broker_config
 from mt5_broker import MT5BrokerInterface
+from arb_utils import build_price_matrix
 
 
 def main():
@@ -12,9 +13,25 @@ def main():
     logger = setup_logger()
     config = load_broker_config(args.asset)
     brokers = init_brokers(config, logger)
-    for broker_name, broker in brokers.items():
-        print(broker)
-        broker.shutdown()
+
+    run_arbitrage(brokers, logger)
+
+
+def run_arbitrage(brokers, logger):
+    while True:
+        bids, asks = build_price_matrix(brokers, logger)
+
+        print("\n\nBroker    |     Bid      |     Ask")
+        print("-----------------------------------------")
+        for i, name in enumerate(list(brokers.keys())):
+            bid = bids[i]
+            ask = asks[i]
+            print(f"{name:<10} | {bid:10.5f} | {ask:10.5f}")
+
+
+        #open_available_trades(div_matrix, brokers, logger)
+        #close_available_trades(div_matrix, brokers,logger)
+    
 
 
 def init_brokers(config, logger):
