@@ -12,6 +12,7 @@ class MT5BrokerInterface:
         self._lock = threading.Lock()
         self.connect()
 
+
     def connect(self, max_attempts=10):
         attempts = 0
         while attempts < max_attempts:

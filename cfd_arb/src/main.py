@@ -2,48 +2,29 @@ import logging
 import sys
 import time
 import argparse
+import multiprocessing as mp
 
 from io_utils import load_broker_config
-from mt5_broker import MT5BrokerInterface
-from arb_utils import build_price_matrix
+from worker import worker_proc
+from master import master_proc
 
 
 def main():
     args = parse_args()
     logger = setup_logger()
     config = load_broker_config(args.asset)
-    brokers = init_brokers(config, logger)
 
-    run_arbitrage(brokers, logger)
+    worker_cmd_queues = []
+    worker_resp_queues = []
+    for broker_conf in config:
+        cmd_q = mp.Queue()
+        resp_q = mp.Queue()
+        p = mp.Process(target=worker_proc, args=(broker_conf, cmd_q, resp_q, logger))
+        p.start()
+        worker_cmd_queues.append(cmd_q)
+        worker_resp_queues.append(resp_q)
 
-
-def run_arbitrage(brokers, logger):
-    while True:
-        bids, asks = build_price_matrix(brokers, logger)
-
-        print("\n\nBroker    |     Bid      |     Ask")
-        print("-----------------------------------------")
-        for i, name in enumerate(list(brokers.keys())):
-            bid = bids[i]
-            ask = asks[i]
-            print(f"{name:<10} | {bid:10.5f} | {ask:10.5f}")
-
-
-        #open_available_trades(div_matrix, brokers, logger)
-        #close_available_trades(div_matrix, brokers,logger)
-    
-
-
-def init_brokers(config, logger):
-    brokers = {}
-    for broker_entry in config:
-        brokers[broker_entry['broker']] = MT5BrokerInterface(
-            name=broker_entry['broker'],
-            path=broker_entry['terminal_path'],
-            symbol=broker_entry['symbols'][0]['broker_symbol'],
-            logger=logger
-        )
-    return brokers
+    master_proc(worker_cmd_queues, worker_resp_queues, logger)
 
 
 def parse_args():
