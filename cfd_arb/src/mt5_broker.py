@@ -4,7 +4,7 @@ from datetime import datetime, UTC
 import time
 
 class MT5BrokerInterface:
-    def __init__(self, name, path, symbol, logger):
+    def __init__(self, name, path, symbol, capital_allocation, max_divergence, logger):
         self.name = name
         self.path = path
         self.symbol = symbol

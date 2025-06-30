@@ -1,7 +1,9 @@
 import json
+import yaml
 from typing import List, Dict
 
-CONFIG_PATH = "../config/broker_config.json"
+
+CONFIG_DIR = "../config/"
 
 
 def load_broker_config(asset: str) -> List[Dict]:
@@ -19,7 +21,8 @@ def load_broker_config(asset: str) -> List[Dict]:
         FileNotFoundError: If the config file is missing.
         json.JSONDecodeError: If the file isn't valid JSON.
     """
-    with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+    path = CONFIG_DIR + "broker_config.json"
+    with open(path, "r", encoding="utf-8") as f:
         config = json.load(f)
 
     valid_types = {"crypto", "index.us", "index.eu", "index.as"}
@@ -60,3 +63,17 @@ def load_broker_config(asset: str) -> List[Dict]:
 
     return filtered_brokers
 
+
+def load_asset_config(asset: str) -> dict:
+    """
+    Loads the config for a specific asset from asset_config.yml.
+    Returns a dict of settings for the asset.
+    Raises a clear error if asset is not found.
+    """
+    path = CONFIG_DIR + "asset_config.yml"
+    with open(path, "r") as f:
+        config = yaml.safe_load(f)
+
+    if asset not in config:
+        raise ValueError(f"Asset '{asset}' not found in asset_config.yml!")
+    return config[asset]

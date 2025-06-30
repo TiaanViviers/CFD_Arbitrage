@@ -4,7 +4,7 @@ import time
 import argparse
 import multiprocessing as mp
 
-from io_utils import load_broker_config
+from io_utils import load_broker_config, load_asset_config
 from worker import worker_proc
 from master import master_proc
 
@@ -12,19 +12,20 @@ from master import master_proc
 def main():
     args = parse_args()
     logger = setup_logger()
-    config = load_broker_config(args.asset)
+    broker_config = load_broker_config(args.asset)
+    asset_config = load_asset_config(args.asset)
 
     worker_cmd_queues = []
     worker_resp_queues = []
-    for broker_conf in config:
+    for broker_conf in broker_config:
         cmd_q = mp.Queue()
         resp_q = mp.Queue()
-        p = mp.Process(target=worker_proc, args=(broker_conf, cmd_q, resp_q, logger))
+        p = mp.Process(target=worker_proc, args=(broker_conf, asset_config, cmd_q, resp_q, logger))
         p.start()
         worker_cmd_queues.append(cmd_q)
         worker_resp_queues.append(resp_q)
 
-    master_proc(worker_cmd_queues, worker_resp_queues, logger)
+    master_proc(asset_config, worker_cmd_queues, worker_resp_queues, logger)
 
 
 def parse_args():
