@@ -3,7 +3,7 @@ from typing import Optional
 
 @dataclass
 class Trade:
-    trade_id: str
+    arb_id: str
     ticket: Optional[int]
     asset: str
     broker: str

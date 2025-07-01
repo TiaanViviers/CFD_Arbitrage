@@ -6,13 +6,21 @@ def worker_proc(broker_conf, cmd_queue, resp_queue, logger):
     while True:
         cmd = cmd_queue.get()
         if cmd["action"] == "get_tick":
-            tick = broker.get_latest_tick()
-            resp_queue.put({"type": "tick", "broker": broker_conf['broker'], "tick": tick})
+            get_tick(broker, resp_queue)
+            
         elif cmd["action"] == "place_order":
             # ... implement trade logic here ...
             pass
         elif cmd["action"] == "shutdown":
             break
+
+
+def get_tick(broker, resp_queue):
+    resp_queue.put({"type": "tick",
+                    "broker": broker.name,
+                    "tick": broker.get_latest_tick(),
+                    "balance": broker.get_balance()
+                })
 
 
 def init_broker(broker_config, logger):
