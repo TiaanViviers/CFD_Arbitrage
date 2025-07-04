@@ -4,14 +4,15 @@ from datetime import datetime, UTC
 import time
 
 class MT5BrokerInterface:
-    def __init__(self, name, path, symbol, capital_allocation, max_divergence, logger):
+    def __init__(self, name, path, symbol, logger):
         self.name = name
         self.path = path
         self.symbol = symbol
         self.logger = logger
         self._lock = threading.Lock()
         self.connect()
-
+        self.digits = self.get_digits()
+        
 
     def connect(self, max_attempts=10):
         attempts = 0
@@ -32,6 +33,17 @@ class MT5BrokerInterface:
 
         self.logger.error(f"[{self.name}] Failed to connect to MT5 after {attempts} attempts. Giving up.")
         return False
+    
+
+    def get_digits(self):
+        info = mt5.symbol_info(self.symbol)
+        if info is None:
+            self.logger.warning(
+                f"[{self.name}] Could not retrieve symbol info for {self.symbol}. Defaulting digits to 2."
+            )
+            self.digits = 2
+        else:
+            self.digits = info.digits
 
 
     def shutdown(self):
@@ -94,8 +106,12 @@ class MT5BrokerInterface:
             self.logger.error(f"[{self.name}] Could not get account balance after {retries+1} attempts.")
             return None
         
+
+    def get_positions(self):
+        return mt5.positions_get(symbol=self.symbol)
     
-    def place_order(self, side, lots, price=None, sl=None, tp=None, deviation=20, magic=1000, comment=''):
+    
+    def place_order(self, side, lots, price=None, sl=None, tp=None, deviation=200, magic=1000, comment=''):
         with self._lock:
             type_map = {'buy': mt5.ORDER_TYPE_BUY, 'sell': mt5.ORDER_TYPE_SELL}
             if side not in type_map:

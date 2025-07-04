@@ -1,37 +1,42 @@
 import time
+from datetime import datetime, UTC
 import pandas as pd
 import numpy as np
 import uuid
+import logging
 
 from trade import Trade
 
-def master_proc(asset_config, worker_cmd_queues, worker_resp_queues, logger):
+logger = logging.getLogger("arbitrage_bot")
+
+
+def master_proc(asset_config, worker_cmd_queues, worker_resp_queues):
     open_trades = []
+    closed_trades = []
     while True:
         # data collection and formatting
         request_worker_ticks(worker_cmd_queues)
         price_matrix, balances_df = get_worker_ticks(worker_resp_queues)
 
         # trade opening
-        request_open_trade(asset_config, price_matrix, balances_df, open_trades, worker_cmd_queues)
-        #open_trades = get_opened_trades(worker_resp_queues)
+        open_trades = open_available_trades(asset_config, price_matrix, balances_df, open_trades,
+                                            worker_cmd_queues, worker_resp_queues)
 
         # trade closing
-        #request_close_trade(open_trades, worker_cmd_queues)
-        #open_trades = get_closed_trades(worker_resp_queues)
+        closed_trades, open_trades = close_available_trades(open_trades, closed_trades, price_matrix,
+                                                            worker_cmd_queues, worker_resp_queues)
 
 
 def request_worker_ticks(worker_cmd_queues):
-    for q in worker_cmd_queues:
+    for q in worker_cmd_queues.values():
         q.put({"action": "get_tick"})
 
 
 def get_worker_ticks(worker_resp_queues):
     ticks = {}
     balances = {}
-    for resp_q in worker_resp_queues:
+    for broker, resp_q in worker_resp_queues.items():
         resp = resp_q.get()
-        broker = resp["broker"]
         ticks[broker] = resp["tick"]
         balances[broker] = resp["balance"]
     price_matrix = build_price_matrix(ticks)
@@ -56,10 +61,11 @@ def build_price_matrix(ticks):
     return df
 
 
-def request_open_trade(asset_config, price_matrix, balances_df, open_trades, worker_cmd_queues):
+def open_available_trades(asset_config, price_matrix, balances_df, open_trades,
+                          worker_cmd_queues, worker_resp_queues):
 
     candidates = find_divergent_pairs(price_matrix, asset_config["entry_threshold"])
-    if not candidates: return
+    if not candidates: return open_trades
 
     for sell_broker, buy_broker, div in candidates:
         if can_open_trade(open_trades, sell_broker, buy_broker):
@@ -73,11 +79,18 @@ def request_open_trade(asset_config, price_matrix, balances_df, open_trades, wor
             buy_sl = calculate_sl("buy", div, asset_config["max_divergence"], sell_broker, price_matrix)
 
             
-            sell_trade = open_trade(sell_broker, buy_broker, "sell", lot_size, price_matrix, sell_sl)
-            buy_trade = open_trade(buy_broker, sell_broker, "buy", lot_size, price_matrix, buy_sl)
+            sell_trade = init_trade(sell_broker, buy_broker, "sell", lot_size,
+                                    price_matrix, sell_sl, asset_config["allowed_slip"])
+            arb_id = sell_trade.arb_id
+            buy_trade = init_trade(buy_broker, sell_broker, "buy", lot_size,
+                                price_matrix, buy_sl, asset_config["allowed_slip"], arb_id=arb_id)
 
-            #place it on worker_cmd_queue
-            
+            trade_pair = place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queues)
+            if trade_pair:
+                open_trades.append(trade_pair)
+
+    return open_trades
+               
 
 def find_divergent_pairs(price_matrix, threshold):
     """
@@ -160,7 +173,7 @@ def calculate_sl(side, current_div, max_div, broker, price_matrix):
     return sl
 
                      
-def open_trade(broker, counter_party, side, lot, price_matrix, sl, logger, arb_id=None):
+def init_trade(broker, counter_party, side, lot, price_matrix, sl, slip, arb_id=None):
     if not arb_id:
         arb_id = str(uuid.uuid4())
 
@@ -177,10 +190,108 @@ def open_trade(broker, counter_party, side, lot, price_matrix, sl, logger, arb_i
         broker=broker,
         counter_party=counter_party,
         side=side,
+        allowed_slip=slip,
         lot_size=lot,
         entry_price=entry_price,
         sl=sl,
     )                     
 
 
+def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queues):
+    """
+    Send trade open requests to both brokers' workers and wait for confirmation.
+    Returns (sell_leg, buy_leg) on success, None on failure.
+    """
+    sell_broker = sell_trade.broker
+    buy_broker = buy_trade.broker
 
+    # Send open trade commands
+    worker_cmd_queues[sell_broker].put({"action": "open_trade", "trade": sell_trade})
+    worker_cmd_queues[buy_broker].put({"action": "open_trade", "trade": buy_trade})
+
+    # Wait for responses
+    sell_trade_resp = worker_resp_queues[sell_broker].get()
+    buy_trade_resp = worker_resp_queues[buy_broker].get()
+
+    # Check responses
+    if sell_trade_resp.status == "open" and buy_trade_resp.status == "open":
+        logger.info(f"Trade pair opened successfully: {sell_broker}<->{buy_broker}")
+        return (sell_trade_resp, buy_trade_resp)
+    else:
+        logger.warning(
+            f"Trade pair failed! sell: {sell_trade_resp.status} ({sell_trade_resp.error}), "
+            f"buy: {buy_trade_resp.status} ({buy_trade_resp.error})"
+        )
+        # Flatten any "orphan" leg
+        if sell_trade_resp.status == "open":
+            logger.warning(f"Orphan sell leg opened on {sell_broker}. Attempting immediate close...")
+            worker_cmd_queues[sell_broker].put({
+                "action": "close_trade",
+                "trade": sell_trade_resp
+            })
+        if buy_trade_resp.status == "open":
+            logger.warning(f"Orphan buy leg opened on {buy_broker}. Attempting immediate close...")
+            worker_cmd_queues[buy_broker].put({
+                "action": "close_trade",
+                "trade": buy_trade_resp
+            })
+        return None
+
+
+def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_queues, worker_resp_queues):
+    to_remove = []
+    for sell_tr, buy_tr in open_trades:
+        # Check if mean reversion or close signal is hit
+        if mean_reverted(sell_tr.broker, buy_tr.broker, price_matrix) and min_trade_time_passed(sell_tr.open_time):
+            # Send close command to both workers
+            close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
+            close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
+            if sell_tr.status == "closed" and buy_tr.status == "closed":
+                closed_trades.append((sell_tr, buy_tr))
+                to_remove.append((sell_tr, buy_tr))
+        
+        #elif sell_tr.status == "pending_close" or buy_tr.status == pending_close ??
+
+    for tr in to_remove:
+        open_trades.remove(tr)
+    return closed_trades, open_trades
+
+
+def mean_reverted(sell_broker, buy_broker, price_matrix):
+    """
+    Returns True if the current divergence between sell and buy brokers has mean-reverted (i.e., no longer positive arbitrage).
+    For a 'sell' leg, you want to close if bid_sell - ask_buy <= 0.
+    """
+    sell_bid = price_matrix.loc[sell_broker, "bid"]
+    buy_ask = price_matrix.loc[buy_broker, "ask"]
+    divergence = sell_bid - buy_ask
+    return divergence <= 0
+
+
+def min_trade_time_passed(open_time, min_seconds=180):
+    """
+    Returns True if at least min_seconds have passed since open_time (both in UTC).
+    open_time: ISO format string, e.g. '2024-06-28T22:15:05.624328+00:00'
+    """
+    if open_time is None:
+        return False
+    
+    dt_open = datetime.fromisoformat(open_time)
+    now = datetime.now(UTC)
+    elapsed = (now - dt_open).total_seconds()
+    return elapsed >= min_seconds
+
+
+def close_leg(trade, worker_cmd_queues, worker_resp_queues):
+    """
+    Request the worker to close the given trade and wait for the response.
+    Returns the updated trade object (with new status).
+    Assumes worker queues are labeled by broker name.
+    """
+    if trade.status == "closed":
+        return trade
+    
+    broker = trade.broker
+    worker_cmd_queues[broker].put({"action": "close_trade", "trade": trade})
+    result_trade = worker_resp_queues[broker].get()
+    return result_trade
