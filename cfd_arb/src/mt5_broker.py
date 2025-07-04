@@ -3,15 +3,24 @@ import threading
 from datetime import datetime, UTC
 import time
 
+FILLING_TYPE_MAP = {
+    "icmarkets": mt5.ORDER_FILLING_IOC,
+    "exness":    mt5.ORDER_FILLING_IOC,
+    "fxtm":      mt5.ORDER_FILLING_FOK,
+    "eightcap":  mt5.ORDER_FILLING_IOC,
+    "xm":        mt5.ORDER_FILLING_RETURN
+}
+
 class MT5BrokerInterface:
     def __init__(self, name, path, symbol, logger):
         self.name = name
         self.path = path
         self.symbol = symbol
         self.logger = logger
+        self.digits = None
+        self.filling_type = None
         self._lock = threading.Lock()
         self.connect()
-        self.digits = self.get_digits()
         
 
     def connect(self, max_attempts=10):
@@ -24,6 +33,8 @@ class MT5BrokerInterface:
                         self.logger.warning(f"[{self.name}] Could not subscribe to symbol {self.symbol}")
                     else:
                         self.logger.info(f"[{self.name}] Subscribed to {self.symbol}")
+                        self.get_digits()
+                        self.get_filling_type()
                     return True
                 else:
                     e = mt5.last_error()
@@ -44,6 +55,10 @@ class MT5BrokerInterface:
             self.digits = 2
         else:
             self.digits = info.digits
+
+
+    def get_filling_type(self):
+        self.filling_type = FILLING_TYPE_MAP.get(self.name, mt5.ORDER_FILLING_IOC)
 
 
     def shutdown(self):
@@ -139,10 +154,10 @@ class MT5BrokerInterface:
                 request = {
                     "action": mt5.TRADE_ACTION_DEAL, "symbol": self.symbol,
                     "volume": lots, "type": type_map[side],
-                    "price": exec_price, "sl": sl, "tp": tp,
+                    "price": exec_price, "sl": sl,
                     "deviation": deviation, "magic": magic,
                     "comment": comment, "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": mt5.ORDER_FILLING_IOC,
+                    "type_filling": self.filling_type
                 }
 
                 self.logger.info(f"[{self.name}] Sending order: {side} {lots} {self.symbol} @ {exec_price}")
@@ -150,6 +165,8 @@ class MT5BrokerInterface:
 
                 if result is None:
                     self.logger.error(f"[{self.name}] order_send() returned None for {self.symbol}.")
+                    error = mt5.last_error()
+                    self.logger.error(f"[{self.name}] order_send failed with error: {error}")
                     return None
 
                 if result.retcode != mt5.TRADE_RETCODE_DONE:
@@ -215,7 +232,7 @@ class MT5BrokerInterface:
                         "deviation": deviation, "magic": magic,
                         "comment": comment or "Auto-close",
                         "type_time": mt5.ORDER_TIME_GTC,
-                        "type_filling": mt5.ORDER_FILLING_IOC,
+                        "type_filling": self.filling_type
                     }
 
                     self.logger.info(

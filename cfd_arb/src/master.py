@@ -3,6 +3,8 @@ from datetime import datetime, UTC
 import pandas as pd
 import numpy as np
 import uuid
+import hashlib
+import random
 import logging
 
 from trade import Trade
@@ -175,7 +177,9 @@ def calculate_sl(side, current_div, max_div, broker, price_matrix):
                      
 def init_trade(broker, counter_party, side, lot, price_matrix, sl, slip, arb_id=None):
     if not arb_id:
-        arb_id = str(uuid.uuid4())
+        u = uuid.uuid4()
+        h = hashlib.sha256(u.bytes).digest()
+        arb_id = int.from_bytes(h[:4], 'big') & 0x7FFFFFFF  # 31-bit positive int
 
     if side == "sell":
         entry_price = price_matrix.loc[broker, "bid"]
@@ -225,16 +229,11 @@ def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queue
         # Flatten any "orphan" leg
         if sell_trade_resp.status == "open":
             logger.warning(f"Orphan sell leg opened on {sell_broker}. Attempting immediate close...")
-            worker_cmd_queues[sell_broker].put({
-                "action": "close_trade",
-                "trade": sell_trade_resp
-            })
+            close_leg(sell_trade_resp, worker_cmd_queues, worker_resp_queues)
         if buy_trade_resp.status == "open":
             logger.warning(f"Orphan buy leg opened on {buy_broker}. Attempting immediate close...")
-            worker_cmd_queues[buy_broker].put({
-                "action": "close_trade",
-                "trade": buy_trade_resp
-            })
+            close_leg(buy_trade_resp, worker_cmd_queues, worker_resp_queues)
+            
         return None
 
 
@@ -268,13 +267,15 @@ def mean_reverted(sell_broker, buy_broker, price_matrix):
     return divergence <= 0
 
 
-def min_trade_time_passed(open_time, min_seconds=180):
+def min_trade_time_passed(open_time):
     """
     Returns True if at least min_seconds have passed since open_time (both in UTC).
     open_time: ISO format string, e.g. '2024-06-28T22:15:05.624328+00:00'
     """
     if open_time is None:
         return False
+    
+    min_seconds = random.randrange(180, 240)
     
     dt_open = datetime.fromisoformat(open_time)
     now = datetime.now(UTC)

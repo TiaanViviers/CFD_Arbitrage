@@ -11,7 +11,7 @@ from master import master_proc
 
 def main():
     args = parse_args()
-    logger = setup_logger()
+    setup_logger()
     broker_config = load_broker_config(args.asset)
     asset_config = load_asset_config(args.asset)
 

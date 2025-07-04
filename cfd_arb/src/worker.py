@@ -1,13 +1,13 @@
 import logging
+import sys
 import time
 from datetime import datetime, UTC
 
 from mt5_broker import MT5BrokerInterface
 
-logger = logging.getLogger("arbitrage_bot")
-
 
 def worker_proc(broker_conf, cmd_queue, resp_queue):
+    logger = setup_logger()
     broker = init_broker(broker_conf, logger)
 
     while True:
@@ -16,10 +16,10 @@ def worker_proc(broker_conf, cmd_queue, resp_queue):
             get_tick(broker, resp_queue)
             
         elif cmd["action"] == "open_trade":
-            handle_open_trade(broker, cmd["trade"], resp_queue)
+            handle_open_trade(broker, cmd["trade"], resp_queue, logger)
         
         elif cmd["action"] == "close_trade":
-            handle_close_trade(broker, cmd["trade"], resp_queue)
+            handle_close_trade(broker, cmd["trade"], resp_queue, logger)
 
         elif cmd["action"] == "shutdown":
             break
@@ -42,7 +42,7 @@ def init_broker(broker_config, logger):
     )
 
 
-def handle_open_trade(broker, trade, resp_queue):
+def handle_open_trade(broker, trade, resp_queue, logger):
     try:
         result = broker.place_order(
             side=trade.side,
@@ -60,7 +60,7 @@ def handle_open_trade(broker, trade, resp_queue):
             pos = my_positions[0]
             trade.ticket = pos.ticket
             trade.entry_price = pos.price_open
-            trade.open_time = datetime.now(UTC).isoformat(),
+            trade.open_time = datetime.now(UTC).isoformat()
             trade.asset = broker.symbol
             trade.status = "open"
             trade.error = None
@@ -81,11 +81,13 @@ def get_deviation(digits, allowed_slip):
     Calculate the MT5 order_send deviation value for a given allowed_slip (in USD or quote currency)
     and number of decimal digits for the symbol.
     """
+    if digits is None:
+        raise ValueError("Digits cannot be None when calculating deviation")
     point = 10 ** -digits
     return int(allowed_slip / point)
 
 
-def handle_close_trade(broker, trade, resp_queue, max_attempts=10):
+def handle_close_trade(broker, trade, resp_queue, logger, max_attempts=10):
     attempts = 0
     while attempts < max_attempts:
         try:
@@ -97,7 +99,7 @@ def handle_close_trade(broker, trade, resp_queue, max_attempts=10):
             )
 
             if result is not None:
-                logger.info(f"Successfully closed {trade.side} on {trade.broker}")
+                logger.warning(f"order_send result: {result._asdict()}")
                 trade.exit_price = getattr(result, "price", None)
                 trade.close_time = datetime.now(UTC).isoformat()
                 trade.status = "closed"
@@ -108,6 +110,7 @@ def handle_close_trade(broker, trade, resp_queue, max_attempts=10):
                     else:
                         trade.pnl = (trade.entry_price - trade.exit_price) * trade.lot_size
                 logger.info(f"Successfully closed {trade.side} on {trade.broker} for ${trade.pnl}")
+                break
 
             else:
                 trade.status = "close_failed"
@@ -120,3 +123,26 @@ def handle_close_trade(broker, trade, resp_queue, max_attempts=10):
         attempts += 1
     resp_queue.put(trade)
 
+
+def setup_logger() -> logging.Logger:
+    """
+    Set up a logger that only writes to stdout, suitable for long-running trading bots on a VPS.
+    """
+    logger = logging.getLogger("arbitrage_bot")
+    logger.setLevel(logging.INFO)
+
+    # Remove any existing handlers (reload safety)
+    if logger.hasHandlers():
+        logger.handlers.clear()
+
+    formatter = logging.Formatter('[%(asctime)s UTC] %(levelname)s %(name)s (%(threadName)s): %(message)s')
+    logging.Formatter.converter = time.gmtime
+
+    # Stream handler for stdout
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setLevel(logging.INFO)
+    stream_handler.setFormatter(formatter)
+
+    logger.addHandler(stream_handler)
+
+    return logger
