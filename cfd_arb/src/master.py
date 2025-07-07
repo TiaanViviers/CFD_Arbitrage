@@ -77,19 +77,14 @@ def open_available_trades(asset_config, price_matrix, balances_df, open_trades,
             if lot_size < asset_config["min_lot"]:
                 continue
 
-            sell_sl = calculate_sl("sell", div, asset_config["max_divergence"], sell_broker, price_matrix)
-            buy_sl = calculate_sl("buy", div, asset_config["max_divergence"], sell_broker, price_matrix)
-
-            
             sell_trade = init_trade(sell_broker, buy_broker, "sell", lot_size,
-                                    price_matrix, sell_sl, asset_config["allowed_slip"])
+                                    price_matrix, asset_config["allowed_slip"])
             arb_id = sell_trade.arb_id
             buy_trade = init_trade(buy_broker, sell_broker, "buy", lot_size,
-                                price_matrix, buy_sl, asset_config["allowed_slip"], arb_id=arb_id)
+                                price_matrix, asset_config["allowed_slip"], arb_id=arb_id)
 
             trade_pair = place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queues)
-            if trade_pair:
-                open_trades.append(trade_pair)
+            open_trades.append(trade_pair)
 
     return open_trades
                
@@ -161,21 +156,8 @@ def calculate_lots(broker, balances_df, asset_conf, current_div, max_trades=2):
     lot_size = round(capital_per_trade / move_to_stop, 2)
     return lot_size
 
-
-def calculate_sl(side, current_div, max_div, broker, price_matrix):
-    max_drawdown = max_div - current_div
-
-    if side == "sell":
-        entry_price = price_matrix.loc[broker, "bid"]
-        sl = entry_price + max_drawdown
-    else:
-        entry_price = price_matrix.loc[broker, "ask"]
-        sl = entry_price - max_drawdown
-                                  
-    return sl
-
                      
-def init_trade(broker, counter_party, side, lot, price_matrix, sl, slip, arb_id=None):
+def init_trade(broker, counter_party, side, lot, price_matrix, slip, arb_id=None):
     if not arb_id:
         u = uuid.uuid4()
         h = hashlib.sha256(u.bytes).digest()
@@ -197,7 +179,6 @@ def init_trade(broker, counter_party, side, lot, price_matrix, sl, slip, arb_id=
         allowed_slip=slip,
         lot_size=lot,
         entry_price=entry_price,
-        sl=sl,
     )                     
 
 
@@ -220,7 +201,6 @@ def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queue
     # Check responses
     if sell_trade_resp.status == "open" and buy_trade_resp.status == "open":
         logger.info(f"Trade pair opened successfully: {sell_broker}<->{buy_broker}")
-        return (sell_trade_resp, buy_trade_resp)
     else:
         logger.warning(
             f"Trade pair failed! sell: {sell_trade_resp.status} ({sell_trade_resp.error}), "
@@ -229,30 +209,44 @@ def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queue
         # Flatten any "orphan" leg
         if sell_trade_resp.status == "open":
             logger.warning(f"Orphan sell leg opened on {sell_broker}. Attempting immediate close...")
-            close_leg(sell_trade_resp, worker_cmd_queues, worker_resp_queues)
+            sell_trade_resp.status = "pending_close"
+            buy_trade_resp.status = "closed"
         if buy_trade_resp.status == "open":
             logger.warning(f"Orphan buy leg opened on {buy_broker}. Attempting immediate close...")
-            close_leg(buy_trade_resp, worker_cmd_queues, worker_resp_queues)
-            
-        return None
+            buy_trade_resp.status = "pending_close"
+            sell_trade_resp.status == "closed"
+
+    return (sell_trade_resp, buy_trade_resp)
 
 
 def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_queues, worker_resp_queues):
     to_remove = []
-    for sell_tr, buy_tr in open_trades:
-        # Check if mean reversion or close signal is hit
-        if mean_reverted(sell_tr.broker, buy_tr.broker, price_matrix) and min_trade_time_passed(sell_tr.open_time):
-            # Send close command to both workers
-            close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
-            close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
-            if sell_tr.status == "closed" and buy_tr.status == "closed":
-                closed_trades.append((sell_tr, buy_tr))
-                to_remove.append((sell_tr, buy_tr))
-        
-        #elif sell_tr.status == "pending_close" or buy_tr.status == pending_close ??
+    updated_closed_trades = []
+
+    for orig_pair in open_trades:
+        sell_tr, buy_tr = orig_pair
+
+        if sell_tr.status == "pending_close":
+            sell_tr = close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
+        if buy_tr.status == "pending_close":
+            buy_tr = close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
+
+        # Check if should close now
+        if sell_tr.status == "open" and buy_tr.status == "open" \
+           and min_trade_time_passed(sell_tr.open_time) \
+           and mean_reverted(sell_tr.broker, buy_tr.broker, price_matrix):
+            sell_tr.status = "pending_close"
+            buy_tr.status = "pending_close"
+            sell_tr = close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
+            buy_tr = close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
+
+        if sell_tr.status == "closed" and buy_tr.status == "closed":
+            updated_closed_trades.append((sell_tr, buy_tr))
+            to_remove.append(orig_pair)
 
     for tr in to_remove:
         open_trades.remove(tr)
+    closed_trades.extend(updated_closed_trades)
     return closed_trades, open_trades
 
 

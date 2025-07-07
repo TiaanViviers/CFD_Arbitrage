@@ -8,7 +8,7 @@ FILLING_TYPE_MAP = {
     "exness":    mt5.ORDER_FILLING_IOC,
     "fxtm":      mt5.ORDER_FILLING_FOK,
     "eightcap":  mt5.ORDER_FILLING_IOC,
-    "xm":        mt5.ORDER_FILLING_RETURN
+    "xm":        mt5.ORDER_FILLING_IOC
 }
 
 class MT5BrokerInterface:
@@ -32,7 +32,6 @@ class MT5BrokerInterface:
                     if not mt5.symbol_select(self.symbol, True):
                         self.logger.warning(f"[{self.name}] Could not subscribe to symbol {self.symbol}")
                     else:
-                        self.logger.info(f"[{self.name}] Subscribed to {self.symbol}")
                         self.get_digits()
                         self.get_filling_type()
                     return True
@@ -73,10 +72,14 @@ class MT5BrokerInterface:
     def get_latest_tick(self):
         with self._lock:
             try:
-                tick = mt5.symbol_info_tick(self.symbol)
-                if tick is None:
-                    self.logger.warning(f"[{self.name}] No tick data available for {self.symbol}.")
+                terminal_info = mt5.terminal_info()
+                if terminal_info is None or not terminal_info.trade_allowed:
                     return None
+
+                tick = mt5.symbol_info_tick(self.symbol)
+                if tick is None or tick.bid <= 0 or tick.ask <= 0:
+                    return None
+
                 return {
                     "timestamp": datetime.now(UTC).isoformat(),
                     "bid": tick.bid,
@@ -154,13 +157,11 @@ class MT5BrokerInterface:
                 request = {
                     "action": mt5.TRADE_ACTION_DEAL, "symbol": self.symbol,
                     "volume": lots, "type": type_map[side],
-                    "price": exec_price, "sl": sl,
-                    "deviation": deviation, "magic": magic,
+                    "price": exec_price,"deviation": deviation, "magic": magic,
                     "comment": comment, "type_time": mt5.ORDER_TIME_GTC,
                     "type_filling": self.filling_type
                 }
 
-                self.logger.info(f"[{self.name}] Sending order: {side} {lots} {self.symbol} @ {exec_price}")
                 result = mt5.order_send(request)
 
                 if result is None:
@@ -187,7 +188,7 @@ class MT5BrokerInterface:
                 return None
             
 
-    def close_position(self, ticket=None, volume=None, deviation=20, magic=1000, comment=''):
+    def close_position(self, ticket=None, volume=None, deviation=200, magic=1000, comment=''):
         """
         Closes open position(s) for the given symbol.
         If `ticket` is provided, only that specific position is closed.
@@ -198,7 +199,7 @@ class MT5BrokerInterface:
                 positions = mt5.positions_get(symbol=self.symbol)
                 if positions is None or len(positions) == 0:
                     self.logger.info(f"[{self.name}] No open positions to close for {self.symbol}.")
-                    return True
+                    return None
 
                 for pos in positions:
                     if ticket is not None and pos.ticket != ticket:
@@ -230,7 +231,7 @@ class MT5BrokerInterface:
                         "volume": close_volume, "type": close_type,
                         "position": pos.ticket, "price": price,
                         "deviation": deviation, "magic": magic,
-                        "comment": comment or "Auto-close",
+                        "comment": comment,
                         "type_time": mt5.ORDER_TIME_GTC,
                         "type_filling": self.filling_type
                     }
@@ -243,22 +244,22 @@ class MT5BrokerInterface:
                         self.logger.error(
                             f"[{self.name}] order_send() returned None while closing position {pos.ticket} on {self.symbol}."
                         )
-                        return False
+                        return None
                     if result.retcode != mt5.TRADE_RETCODE_DONE:
                         self.logger.error(
                             f"[{self.name}] Failed to close position {pos.ticket}: {result.comment} (retcode={result.retcode})"
                         )
-                        return False
+                        return None
                     self.logger.info(
                         f"[{self.name}] Closed position ticket {pos.ticket}: {close_type} {close_volume} {self.symbol} (order: {result.order})"
                     )
-                return True
+                    return result
 
             except Exception as e:
                 self.logger.error(
                     f"[{self.name}] Exception while closing position(s) for {self.symbol}: {e}", exc_info=True
                 )
-                return False
+                return None
 
 
     def __repr__(self):

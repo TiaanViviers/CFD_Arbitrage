@@ -44,14 +44,15 @@ def init_broker(broker_config, logger):
 
 def handle_open_trade(broker, trade, resp_queue, logger):
     try:
-        result = broker.place_order(
-            side=trade.side,
-            lots=trade.lot_size,
-            price=trade.entry_price,
-            sl=trade.sl,
-            deviation=get_deviation(broker.digits, trade.allowed_slip),
-            magic=trade.arb_id
-        )
+        if trade.sl != None and trade.tp != None:
+            _result = broker.place_order(side=trade.side, lots=trade.lot_size, price=trade.entry_price,
+                      deviation=get_deviation(broker.digits, trade.allowed_slip), magic=trade.arb_id,
+                      sl=trade.sl, tp=trade.tp
+            )
+        else:
+             _result = broker.place_order(side=trade.side, lots=trade.lot_size, price=trade.entry_price,
+                      deviation=get_deviation(broker.digits, trade.allowed_slip), magic=trade.arb_id
+            )
         time.sleep(0.5)
 
         positions = broker.get_positions()
@@ -64,7 +65,6 @@ def handle_open_trade(broker, trade, resp_queue, logger):
             trade.asset = broker.symbol
             trade.status = "open"
             trade.error = None
-            logger.info(f"Successfully opened {trade.side} on {trade.broker}")
         else:
             trade.ticket = None
             trade.status = "failed"
@@ -87,40 +87,35 @@ def get_deviation(digits, allowed_slip):
     return int(allowed_slip / point)
 
 
-def handle_close_trade(broker, trade, resp_queue, logger, max_attempts=10):
-    attempts = 0
-    while attempts < max_attempts:
-        try:
-            result = broker.close_position(
-                ticket=trade.ticket,
-                volume=trade.lot_size,
-                deviation=get_deviation(broker.digits, trade.allowed_slip),
-                magic=trade.arb_id
-            )
+def handle_close_trade(broker, trade, resp_queue, logger,):
+    try:
+        result = broker.close_position(
+            ticket=trade.ticket,
+            volume=trade.lot_size,
+            deviation=get_deviation(broker.digits, trade.allowed_slip),
+            magic=trade.arb_id
+        )
 
-            if result is not None:
-                logger.warning(f"order_send result: {result._asdict()}")
-                trade.exit_price = getattr(result, "price", None)
-                trade.close_time = datetime.now(UTC).isoformat()
-                trade.status = "closed"
-                trade.error = None
-                if trade.exit_price is not None and trade.entry_price is not None:
-                    if trade.side == "buy":
-                        trade.pnl = (trade.exit_price - trade.entry_price) * trade.lot_size
-                    else:
-                        trade.pnl = (trade.entry_price - trade.exit_price) * trade.lot_size
-                logger.info(f"Successfully closed {trade.side} on {trade.broker} for ${trade.pnl}")
-                break
+        if result is not None:
+            trade.exit_price = getattr(result, "price", None)
+            trade.close_time = datetime.now(UTC).isoformat()
+            trade.status = "closed"
+            trade.error = None
+            if trade.exit_price is not None and trade.entry_price is not None:
+                if trade.side == "buy":
+                    trade.pnl = (trade.exit_price - trade.entry_price) * trade.lot_size
+                else:
+                    trade.pnl = (trade.entry_price - trade.exit_price) * trade.lot_size
+            logger.info(f"Successfully closed {trade.side} on {trade.broker} for ${trade.pnl}")
 
-            else:
-                trade.status = "close_failed"
-                trade.error = f"Broker reported failure: {getattr(result, 'comment', 'no comment')}"
+        else:
+            trade.status = "pending_close"
 
-        except Exception as e:
-            trade.status = "close_failed"
-            trade.error = str(e)
-        time.sleep(1)
-        attempts += 1
+    except Exception as e:
+        trade.status = "pending_close"
+        trade.error = str(e)
+    
+    logger.warning(f"placing {trade.broker} trade on resp queue with status={trade.status}")
     resp_queue.put(trade)
 
 
