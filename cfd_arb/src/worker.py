@@ -88,6 +88,12 @@ def get_deviation(digits, allowed_slip):
 
 
 def handle_close_trade(broker, trade, resp_queue, logger,):
+    #check for already closed
+    if trade.exit_price != None or trade.close_time != None:
+        trade.status = "closed"
+        resp_queue.put(trade)
+        return
+
     try:
         result = broker.close_position(
             ticket=trade.ticket,
@@ -115,7 +121,6 @@ def handle_close_trade(broker, trade, resp_queue, logger,):
         trade.status = "pending_close"
         trade.error = str(e)
     
-    logger.warning(f"placing {trade.broker} trade on resp queue with status={trade.status}")
     resp_queue.put(trade)
 
 

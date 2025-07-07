@@ -220,18 +220,18 @@ def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queue
 
 
 def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_queues, worker_resp_queues):
-    to_remove = []
+    to_remove_indices = []
     updated_closed_trades = []
 
-    for orig_pair in open_trades:
-        sell_tr, buy_tr = orig_pair
+    for idx in range(len(open_trades)):
+        sell_tr, buy_tr = open_trades[idx]
 
         if sell_tr.status == "pending_close":
             sell_tr = close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
         if buy_tr.status == "pending_close":
             buy_tr = close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
 
-        # Check if should close now
+        # Check if trade should be closed now
         if sell_tr.status == "open" and buy_tr.status == "open" \
            and min_trade_time_passed(sell_tr.open_time) \
            and mean_reverted(sell_tr.broker, buy_tr.broker, price_matrix):
@@ -242,12 +242,15 @@ def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_
 
         if sell_tr.status == "closed" and buy_tr.status == "closed":
             updated_closed_trades.append((sell_tr, buy_tr))
-            to_remove.append(orig_pair)
+            to_remove_indices.append(idx)
 
-    for tr in to_remove:
-        open_trades.remove(tr)
+    # Remove by index in reverse to avoid shifting
+    for idx in sorted(to_remove_indices, reverse=True):
+        del open_trades[idx]
+
     closed_trades.extend(updated_closed_trades)
     return closed_trades, open_trades
+
 
 
 def mean_reverted(sell_broker, buy_broker, price_matrix):
