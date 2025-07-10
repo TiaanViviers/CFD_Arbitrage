@@ -1,43 +1,46 @@
 import random
 import uuid
 import hashlib
+import logging
 
 from trade import Trade
 
+logger = logging.getLogger("arbitrage_bot")
 MAX_WINRATE = 0.65
 BROKERS = ["icmarkets", "exness", "fxtm", "eightcap", "xm"]
 
-def open_lim(lim_open, lim_closed, closed_trades, asset_conf, balances_df, price_matrix,
+def open_lim(open_lim, closed_lim, closed_trades, asset_conf, balances_df, price_matrix,
             worker_cmd_queues, worker_resp_queues):
     for broker in BROKERS:
-        if has_lim(broker, lim_open):
+        if has_lim(broker, open_lim):
             continue
-        winrate = get_winrate(broker, lim_closed, closed_trades)
+        winrate = get_winrate(broker, closed_lim, closed_trades)
         if winrate > MAX_WINRATE:
             lim_trade = init_lim_trade(broker, asset_conf, balances_df, price_matrix)
-            lim_trade = place_lim_trade(lim_trade, broker, worker_cmd_queues, worker_resp_queues)
+            lim_trade = place_lim_trade(lim_trade, worker_cmd_queues, worker_resp_queues)
             if lim_trade.status == "open":
-                lim_open.append(lim_trade)
+                logger
+                open_lim.append(lim_trade)
     
-    return lim_open
+    return open_lim
 
 
-def has_lim(broker_name, lim_open):
-    for tr in lim_open:
+def has_lim(broker_name, open_lim):
+    for tr in open_lim:
         if tr.broker == broker_name:
             return True
     
     return False
 
 
-def get_winrate(broker_name, closed_trades, lim_closed):
+def get_winrate(broker_name, closed_trades, closed_lim):
     """
     Calculates the win rate for a specific broker.
 
     Args:
         broker_name (str): Broker to evaluate.
         closed_trades (list[tuple]): List of (sell, buy) Trade tuples.
-        lim_closed (list): List of LIM Trade objects (flat list).
+        closed_lim (list): List of LIM Trade objects (flat list).
 
     Returns:
         float: Win rate if >= 5 trades, else 0.
@@ -55,7 +58,7 @@ def get_winrate(broker_name, closed_trades, lim_closed):
                 wins += 1
 
     # Loop through LIM trade list
-    for tr in lim_closed:
+    for tr in closed_lim:
         if tr.broker != broker_name or tr.status != "closed":
             continue
         total += 1
@@ -112,7 +115,7 @@ def calculate_lot_size(entry_price, balance, asset_conf):
 
 def calculate_sl_tp(entry_price, side, asset_conf):
     sl_pct = asset_conf.get("lim_sl_pct", 0.003)
-    tp_pct = 3
+    tp_pct = random.uniform(2.5, 4.2)
 
     sl_distance = entry_price * sl_pct
     tp_distance = sl_distance * tp_pct
@@ -125,3 +128,17 @@ def calculate_sl_tp(entry_price, side, asset_conf):
         tp = entry_price - tp_distance
 
     return sl, tp
+
+
+def place_lim_trade(trade, worker_cmd_queues, worker_resp_queues):
+    # Send open trade commands
+    worker_cmd_queues[trade.broker].put({"action": "open_trade", "trade": trade})
+    # Get response
+    trade_resp = worker_resp_queues[trade.broker].get()
+    # Check responses
+    if trade_resp.status == "open":
+        logger.info(f"LIM trade opened successfully on {trade.broker} @ {trade.lot_size} lots")
+    else:
+        logger.info(f"LIM trade failed on {trade.broker}..")
+    
+    return trade

@@ -1,10 +1,10 @@
 BTCUSD:
-  entry_threshold: 25
+  entry_threshold: 20
   max_divergence: 1500
   capital_allocation: 0.3
   min_lot: 0.01
   allowed_slip: 30
-  LIM: 0.03
+  lim_sl_pct: 0.003
 
 GER40:
   entry_threshold: 90
@@ -12,7 +12,7 @@ GER40:
   capital_allocation: 0.4
   min_lot: 0.01
   allowed_slip: 5
-  LIM: 0.03
+  lim_sl_pct: 0.003
 
 JP225:
   entry_threshold: 150
@@ -20,18 +20,19 @@ JP225:
   capital_allocation: 0.4
   min_lot: 0.1
   allowed_slip: 5
-  LIM: 0.03
+  lim_sl_pct: 0.003
 
 US30:
-  entry_threshold: 200
+  entry_threshold: 30
   max_divergence: 900
   capital_allocation: 0.5
-  allowed_slip: 5
-  LIM: 0.02
+  min_lot: 0.1
+  allowed_slip: 7.5
+  lim_sl_pct: 0.002
 
 US100:
   entry_threshold: 110
   max_divergence: 700
   capital_allocation: 0.4
   allowed_slip: 5
-  LIM: 0.03
+  lim_sl_pct: 0.003

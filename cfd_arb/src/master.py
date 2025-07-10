@@ -1,20 +1,21 @@
-import time
 from datetime import datetime, UTC
 import pandas as pd
 import numpy as np
+import math
 import uuid
 import hashlib
 import random
 import logging
 
 from trade import Trade
+from lim import open_lim
 
 logger = logging.getLogger("arbitrage_bot")
 
 
 def master_proc(asset_config, worker_cmd_queues, worker_resp_queues):
-    open_trades = []
-    closed_trades = []
+    open_trades = [] ; closed_trades = []
+    open_lim_trades = [] ; closed_lim_trades = []
     while True:
         # data collection and formatting
         request_worker_ticks(worker_cmd_queues)
@@ -23,10 +24,17 @@ def master_proc(asset_config, worker_cmd_queues, worker_resp_queues):
         # trade opening
         open_trades = open_available_trades(asset_config, price_matrix, balances_df, open_trades,
                                             worker_cmd_queues, worker_resp_queues)
+        open_lim_trades = open_lim(open_lim_trades, closed_lim_trades, closed_trades, asset_config, balances_df,
+                                            price_matrix, worker_cmd_queues, worker_resp_queues)
 
         # trade closing
         closed_trades, open_trades = close_available_trades(open_trades, closed_trades, price_matrix,
                                                             worker_cmd_queues, worker_resp_queues)
+        
+        # trade synchronization and updating
+
+
+        
 
 
 def request_worker_ticks(worker_cmd_queues):
@@ -153,8 +161,12 @@ def calculate_lots(broker, balances_df, asset_conf, current_div, max_trades=2):
     if move_to_stop <= 0:
         return 0
     
-    lot_size = round(capital_per_trade / move_to_stop, 2)
-    return lot_size
+    raw_lot = capital_per_trade / move_to_stop
+    if raw_lot < asset_conf["min_lot"]:
+        return 0.0
+    
+    steps = math.floor(raw_lot / asset_conf["min_lot"])
+    return round(steps * asset_conf["min_lot"], 2)
 
                      
 def init_trade(broker, counter_party, side, lot, price_matrix, slip, arb_id=None):
@@ -209,17 +221,20 @@ def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queue
         # Flatten any "orphan" leg
         if sell_trade_resp.status == "open":
             logger.warning(f"Orphan sell leg opened on {sell_broker}. Attempting immediate close...")
-            sell_trade_resp.status = "pending_close"
+            sell_trade_resp = close_leg(sell_trade_resp, worker_cmd_queues, worker_resp_queues)
             buy_trade_resp.status = "closed"
         if buy_trade_resp.status == "open":
             logger.warning(f"Orphan buy leg opened on {buy_broker}. Attempting immediate close...")
-            buy_trade_resp.status = "pending_close"
+            buy_trade_resp.status = close_leg(buy_trade_resp, worker_cmd_queues, worker_resp_queues)
             sell_trade_resp.status == "closed"
 
     return (sell_trade_resp, buy_trade_resp)
 
 
 def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_queues, worker_resp_queues):
+    if len(open_trades) == 0:
+        return closed_trades, open_trades
+    
     to_remove_indices = []
     updated_closed_trades = []
 
@@ -235,8 +250,6 @@ def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_
         if sell_tr.status == "open" and buy_tr.status == "open" \
            and min_trade_time_passed(sell_tr.open_time) \
            and mean_reverted(sell_tr.broker, buy_tr.broker, price_matrix):
-            sell_tr.status = "pending_close"
-            buy_tr.status = "pending_close"
             sell_tr = close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
             buy_tr = close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
 
@@ -250,7 +263,6 @@ def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_
 
     closed_trades.extend(updated_closed_trades)
     return closed_trades, open_trades
-
 
 
 def mean_reverted(sell_broker, buy_broker, price_matrix):

@@ -153,14 +153,24 @@ class MT5BrokerInterface:
                             f"[{self.name}] Invalid tick data for {self.symbol}: bid={tick.bid}, ask={tick.ask}"
                         )
                         return None
-
-                request = {
-                    "action": mt5.TRADE_ACTION_DEAL, "symbol": self.symbol,
-                    "volume": lots, "type": type_map[side],
-                    "price": exec_price,"deviation": deviation, "magic": magic,
-                    "comment": comment, "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": self.filling_type
-                }
+                
+                if tp == None and sl == None:
+                    request = {
+                        "action": mt5.TRADE_ACTION_DEAL, "symbol": self.symbol,
+                        "volume": lots, "type": type_map[side],
+                        "price": exec_price,"deviation": deviation, "magic": magic,
+                        "comment": comment, "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": self.filling_type
+                    }
+                else:
+                    request = {
+                        "action": mt5.TRADE_ACTION_DEAL, "symbol": self.symbol,
+                        "volume": lots, "type": type_map[side],
+                        "price": exec_price,"deviation": deviation, "magic": magic,
+                        "comment": comment, "type_time": mt5.ORDER_TIME_GTC,
+                        "type_filling": self.filling_type,
+                        "tp": tp, "sl": sl
+                    }
 
                 result = mt5.order_send(request)
 
@@ -260,6 +270,36 @@ class MT5BrokerInterface:
                     f"[{self.name}] Exception while closing position(s) for {self.symbol}: {e}", exc_info=True
                 )
                 return None
+            
+
+    def get_open_positions(self):
+        """
+        Safely query all open positions for self.symbol.
+        Returns a list of position dicts or an empty list.
+        """
+        with self._lock:
+            try:
+                positions = mt5.positions_get(symbol=self.symbol)
+
+                if positions is None:
+                    self.logger.warning(f"[{self.name}] Failed to fetch open positions for {self.symbol}.")
+                    return []
+
+                open_positions = []
+                for pos in positions:
+                    pos_data = {
+                        "ticket": pos.ticket,
+                        "magic": pos.magic,
+                        "side": "buy" if pos.type == mt5.ORDER_TYPE_BUY else "sell",
+                        "volume": pos.volume,
+                    }
+                    open_positions.append(pos_data)
+
+                return open_positions
+
+            except Exception as e:
+                self.logger.error(f"[{self.name}] Exception in get_open_positions(): {e}")
+                return []
 
 
     def __repr__(self):

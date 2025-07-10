@@ -20,6 +20,9 @@ def worker_proc(broker_conf, cmd_queue, resp_queue):
         
         elif cmd["action"] == "close_trade":
             handle_close_trade(broker, cmd["trade"], resp_queue, logger)
+        
+        elif cmd["action"] == "get_open_positions":
+            handle_get_open_positions(broker, resp_queue, logger)
 
         elif cmd["action"] == "shutdown":
             break
@@ -122,6 +125,15 @@ def handle_close_trade(broker, trade, resp_queue, logger,):
         trade.error = str(e)
     
     resp_queue.put(trade)
+
+
+def handle_get_open_positions(broker, resp_queue, logger):
+    try:
+        positions = broker.get_open_positions()
+        resp_queue.put({"positions": positions})
+    except Exception as e:
+        logger.error(f"[{broker.name}] Failed to get open positions: {e}")
+        resp_queue.put({"positions": []})
 
 
 def setup_logger() -> logging.Logger:
