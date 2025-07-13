@@ -1,5 +1,5 @@
 BTCUSD:
-  entry_threshold: 20
+  entry_threshold: 60
   max_divergence: 1500
   capital_allocation: 0.3
   min_lot: 0.01

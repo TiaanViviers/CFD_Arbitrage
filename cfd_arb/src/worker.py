@@ -25,6 +25,7 @@ def worker_proc(broker_conf, cmd_queue, resp_queue):
             handle_get_open_positions(broker, resp_queue, logger)
 
         elif cmd["action"] == "shutdown":
+            logger.info(f"exiting worker for broker {broker}")
             break
 
 

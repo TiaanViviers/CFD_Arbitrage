@@ -1,4 +1,5 @@
 from datetime import datetime, UTC
+import time
 import pandas as pd
 import numpy as np
 import math
@@ -7,34 +8,51 @@ import hashlib
 import random
 import logging
 
+
 from trade import Trade
-from lim import open_lim
+from lim import open_lim, sync_lim_trades
 
 logger = logging.getLogger("arbitrage_bot")
 
 
 def master_proc(asset_config, worker_cmd_queues, worker_resp_queues):
-    open_trades = [] ; closed_trades = []
-    open_lim_trades = [] ; closed_lim_trades = []
-    while True:
-        # data collection and formatting
-        request_worker_ticks(worker_cmd_queues)
-        price_matrix, balances_df = get_worker_ticks(worker_resp_queues)
+    open_trades       = [] 
+    closed_trades     = []
+    open_lim_trades   = [] 
+    closed_lim_trades = []
 
-        # trade opening
-        open_trades = open_available_trades(asset_config, price_matrix, balances_df, open_trades,
-                                            worker_cmd_queues, worker_resp_queues)
-        open_lim_trades = open_lim(open_lim_trades, closed_lim_trades, closed_trades, asset_config, balances_df,
-                                            price_matrix, worker_cmd_queues, worker_resp_queues)
+    try:
+        while True:
+            #Data collection
+            request_worker_ticks(worker_cmd_queues)
+            price_matrix, balances_df = get_worker_ticks(worker_resp_queues)
 
-        # trade closing
-        closed_trades, open_trades = close_available_trades(open_trades, closed_trades, price_matrix,
-                                                            worker_cmd_queues, worker_resp_queues)
-        
-        # trade synchronization and updating
+            # Open new trades
+            open_trades     = open_available_trades(asset_config, price_matrix, balances_df,
+                                                    open_trades, worker_cmd_queues, worker_resp_queues)
+            open_lim_trades = open_lim(open_lim_trades, closed_lim_trades, closed_trades,
+                                       asset_config, balances_df, price_matrix,
+                                       worker_cmd_queues, worker_resp_queues)
 
+            # Close eligible trades
+            closed_trades, open_trades = close_available_trades(open_trades, closed_trades, price_matrix,
+                                                                worker_cmd_queues, worker_resp_queues)
 
-        
+            # 4. Sync & clean up
+            broker_positions = request_broker_positions(worker_cmd_queues, worker_resp_queues)
+            closed_trades, open_trades = sync_arb_trades(closed_trades, open_trades, broker_positions)
+            closed_lim_trades, open_lim_trades = sync_lim_trades(closed_lim_trades, open_lim_trades,
+                                                                 broker_positions, price_matrix)
+            clean_rogue_trades(open_trades, open_lim_trades, broker_positions, worker_cmd_queues, 
+                               worker_resp_queues)
+            
+            time.sleep(0.5)
+
+    except KeyboardInterrupt:
+        logger.info("Keyboard interrupt received — shutting down workers...")
+        for broker, cmd_q in worker_cmd_queues.items():
+            cmd_q.put({"action": "shutdown"})
+        logger.info("Shutdown commands sent. Exiting master_proc.")
 
 
 def request_worker_ticks(worker_cmd_queues):
@@ -47,10 +65,11 @@ def get_worker_ticks(worker_resp_queues):
     balances = {}
     for broker, resp_q in worker_resp_queues.items():
         resp = resp_q.get()
-        ticks[broker] = resp["tick"]
-        balances[broker] = resp["balance"]
+        ticks[broker] = resp.get("tick")
+        balances[broker] = resp.get("balance")
+
     price_matrix = build_price_matrix(ticks)
-    balances_df = pd.Series(balances, name="balance").sort_index()
+    balances_df  = pd.Series(balances, name="balance").sort_index()
     return price_matrix, balances_df
 
 
@@ -305,3 +324,101 @@ def close_leg(trade, worker_cmd_queues, worker_resp_queues):
     worker_cmd_queues[broker].put({"action": "close_trade", "trade": trade})
     result_trade = worker_resp_queues[broker].get()
     return result_trade
+
+
+def request_broker_positions(worker_cmd_queues, worker_resp_queues):
+    """
+    Ask each worker for their currently open broker-side positions.
+
+    Returns:
+        dict[str, list[Position]]: A mapping from broker name to list of Position objects.
+    """
+    # Send request to each broker
+    for broker, cmd_q in worker_cmd_queues.items():
+        cmd_q.put({"action": "get_open_positions"})
+
+    # Collect responses
+    broker_positions = {}
+    for broker, resp_q in worker_resp_queues.items():
+        try:
+            resp = resp_q.get()
+            broker_positions[broker] = resp.get("positions", [])
+        except Exception as e:
+            logger.error(f"[master] Failed to get positions from {broker}: {e}")
+            broker_positions[broker] = []
+
+    return broker_positions
+
+
+def sync_arb_trades(closed_trades, open_trades, broker_positions):
+    """
+    Reconcile master’s open_trades with broker_positions.
+    Returns (new_closed_trades, new_open_trades).
+    """
+
+    # Prepare quick lookups: broker -> set of magic IDs
+    open_ids_by_broker = {
+        broker: {pos["magic"] for pos in positions}
+        for broker, positions in broker_positions.items()
+    }
+
+    # Begin with a shallow copy of closed_trades
+    new_closed = closed_trades.copy()
+    new_open   = []
+
+    # Iterate internal open pairs
+    for sell_tr, buy_tr in open_trades:
+        sell_open = sell_tr.arb_id in open_ids_by_broker.get(sell_tr.broker, set())
+        buy_open  = buy_tr.arb_id  in open_ids_by_broker.get(buy_tr.broker,  set())
+
+        if not sell_open and  buy_open:
+            # sell leg went away, buy still there → close sell, retry buy
+            sell_tr.status = "closed"
+            buy_tr .status = "pending_close"
+            new_open.append((sell_tr, buy_tr))
+
+        elif sell_open and not buy_open:
+            # buy leg went away, sell still there → close buy, retry sell
+            buy_tr .status = "closed"
+            sell_tr.status = "pending_close"
+            new_open.append((sell_tr, buy_tr))
+
+        elif not sell_open and not buy_open:
+            # both legs closed at broker → close both in master
+            sell_tr.status = "closed"
+            buy_tr .status = "closed"
+            new_closed.append((sell_tr, buy_tr))
+
+        else:
+            # both still open
+            new_open.append((sell_tr, buy_tr))
+
+    return new_closed, new_open
+
+
+def clean_rogue_trades(open_trades, open_lim_trades, broker_positions,
+                        worker_cmd_queues, worker_resp_queues):
+    """
+    Finds any live broker positions whose magic IDs aren’t in open_trades
+    or open_lim_trades, and closes them.
+    """
+    arb_ids = {tr.arb_id for s,b in open_trades for tr in (s,b)}
+    lim_ids = {tr.arb_id for tr in open_lim_trades}
+    tracked_ids = arb_ids | lim_ids
+
+    for broker, positions in broker_positions.items():
+        for pos in positions:
+            magic = pos["magic"]
+            if magic in tracked_ids:
+                continue
+
+            logger.warning(f"[sync] Rogue position on {broker}: magic={magic}, closing now..")
+            stub = Trade(
+                arb_id=magic,
+                broker=broker,
+                ticket=pos["ticket"],
+                lot_size=pos["volume"],
+                side=pos["side"],
+                allowed_slip=10
+            )
+            close_leg(stub, worker_cmd_queues, worker_resp_queues)

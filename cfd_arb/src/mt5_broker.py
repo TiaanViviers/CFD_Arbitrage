@@ -19,7 +19,8 @@ class MT5BrokerInterface:
         self.logger = logger
         self.digits = None
         self.filling_type = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+        self._last_tick_id = None
         self.connect()
         
 
@@ -72,19 +73,28 @@ class MT5BrokerInterface:
     def get_latest_tick(self):
         with self._lock:
             try:
-                terminal_info = mt5.terminal_info()
-                if terminal_info is None or not terminal_info.trade_allowed:
+                if not self.is_trade_possible():
+                    self.logger.warning(f"Market is currently closed for {self.symbol} on {self.name}")
                     return None
-
+                
                 tick = mt5.symbol_info_tick(self.symbol)
                 if tick is None or tick.bid <= 0 or tick.ask <= 0:
+                    self.logger.warning(f"Found dirty for {self.symbol} on {self.name}")
                     return None
+                
+                # stale detection
+                key = (tick.time_msc, tick.bid, tick.ask)
+                if key == self._last_tick_id:
+                    self.logger.warning(f"Detected Stale tick for {self.symbol} on {self.name}")
+                    return None
+                self._last_tick_id = key
 
                 return {
                     "timestamp": datetime.now(UTC).isoformat(),
                     "bid": tick.bid,
                     "ask": tick.ask,
                 }
+            
             except Exception as e:
                 self.logger.error(f"[{self.name}] Exception when fetching tick for {self.symbol}: {e}")
                 return None
@@ -93,16 +103,28 @@ class MT5BrokerInterface:
     def is_trade_possible(self):
         with self._lock:
             try:
+                # Terminal-wide trading
+                term = mt5.terminal_info()
+                if term is None or not term.trade_allowed:
+                    return False
+
+                # Symbol-level trading
                 info = mt5.symbol_info(self.symbol)
                 if info is None:
-                    self.logger.warning(f"[{self.name}] Failed to get symbol info for {self.symbol}")
+                    self.logger.warning(f"[{self.name}] No symbol_info for {self.symbol}")
                     return False
-                if not info.trade_allowed:
-                    self.logger.info(f"[{self.name}] Trading is currently NOT allowed on {self.symbol}.")
+                # SYMBOL_TRADE_MODE_DISABLED = 0
+                if info.trade_mode == mt5.SYMBOL_TRADE_MODE_DISABLED:
+                    self.logger.info(f"[{self.name}] Symbol {self.symbol} is disabled.")
                     return False
+                if not info.trade_mode == mt5.SYMBOL_TRADE_MODE_FULL:
+                    self.logger.info(f"Symbol {self.symbol} is not allowing full trade operations.")
+                    return False
+
                 return True
+
             except Exception as e:
-                self.logger.error(f"[{self.name}] Exception checking trade possible for {self.symbol}: {e}")
+                self.logger.error(f"[{self.name}] Exception checking trade_possible: {e}")
                 return False
         
 

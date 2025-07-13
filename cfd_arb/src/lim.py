@@ -2,6 +2,7 @@ import random
 import uuid
 import hashlib
 import logging
+from datetime import datetime, UTC
 
 from trade import Trade
 
@@ -14,7 +15,7 @@ def open_lim(open_lim, closed_lim, closed_trades, asset_conf, balances_df, price
     for broker in BROKERS:
         if has_lim(broker, open_lim):
             continue
-        winrate = get_winrate(broker, closed_lim, closed_trades)
+        winrate = get_winrate(broker, closed_trades, closed_lim)
         if winrate > MAX_WINRATE:
             lim_trade = init_lim_trade(broker, asset_conf, balances_df, price_matrix)
             lim_trade = place_lim_trade(lim_trade, worker_cmd_queues, worker_resp_queues)
@@ -142,3 +143,47 @@ def place_lim_trade(trade, worker_cmd_queues, worker_resp_queues):
         logger.info(f"LIM trade failed on {trade.broker}..")
     
     return trade
+
+
+def sync_lim_trades(closed_lim, open_lim, broker_positions, price_matrix):
+    still_open, just_closed = find_closed_lim_trades(open_lim, broker_positions)
+
+    for tr in just_closed:
+        finalize_lim_trade(tr, price_matrix)
+    closed_lim.extend(just_closed)
+
+    return closed_lim, still_open
+
+
+def find_closed_lim_trades(open_lim, broker_positions):
+    # build live-id sets per broker
+    live_ids = {
+      b: {pos["magic"] for pos in ps}
+      for b, ps in broker_positions.items()
+    }
+
+    still_open, just_closed = [], []
+    for tr in open_lim:
+        if tr.arb_id in live_ids.get(tr.broker, set()):
+            still_open.append(tr)
+        else:
+            just_closed.append(tr)
+    return still_open, just_closed
+
+
+def finalize_lim_trade(tr, price_matrix):
+    # exit price from latest tick
+    try:
+        tick = price_matrix.loc[tr.broker]
+        tr.exit_price = tick["bid"] if tr.side == "buy" else tick["ask"]
+    except KeyError:
+        tr.exit_price = tr.entry_price
+
+    tr.close_time = datetime.now(UTC).isoformat()
+    tr.status = "closed"
+
+    # compute pnl
+    tr.pnl = ((tr.exit_price - tr.entry_price) if tr.side == "buy"
+              else (tr.entry_price - tr.exit_price)) * tr.lot_size
+    
+    return tr
