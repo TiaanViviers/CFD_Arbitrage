@@ -46,7 +46,7 @@ def master_proc(asset_config, worker_cmd_queues, worker_resp_queues):
             clean_rogue_trades(open_trades, open_lim_trades, broker_positions, worker_cmd_queues, 
                                worker_resp_queues)
             
-            time.sleep(0.5)
+            time.sleep(0.25)
 
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received — shutting down workers...")
@@ -289,9 +289,9 @@ def mean_reverted(sell_broker, buy_broker, price_matrix):
     Returns True if the current divergence between sell and buy brokers has mean-reverted (i.e., no longer positive arbitrage).
     For a 'sell' leg, you want to close if bid_sell - ask_buy <= 0.
     """
-    sell_bid = price_matrix.loc[sell_broker, "bid"]
-    buy_ask = price_matrix.loc[buy_broker, "ask"]
-    divergence = sell_bid - buy_ask
+    sell_ask = price_matrix.loc[sell_broker, "ask"]
+    buy_bid = price_matrix.loc[buy_broker, "bid"]
+    divergence = buy_bid - sell_ask
     return divergence <= 0
 
 
