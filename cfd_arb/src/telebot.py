@@ -9,14 +9,16 @@ class TeleBot:
     """
 
     def __init__(self):
+        self.symbol = ''
         self.token = "8057200194:AAHYTBORzzAcMEE2KQ2CmDmFyJSE1VtYjFw"
         self.chat_id = -4940676347
         self._lock = threading.Lock()
 
+
     @staticmethod
     def _now_str():
-        # Returns UTC now as YYYY-MM-DD HH:MM
         return datetime.now(UTC).strftime("%Y-%m-%d %H:%M")
+
 
     def send_message(self, message):
         """
@@ -35,48 +37,6 @@ class TeleBot:
             except Exception as e:
                 print(f"[TeleBot] Exception: {e}")
 
-    def alert(self, msg, *, symbol=None, critical=False):
-        """Send an urgent alert, e.g., unexpected exposure or broker error."""
-        time = self._now_str()
-        prefix = "‼️ CRITICAL ALERT" if critical else "⚠️ Alert"
-        lines = [f"{prefix} at {time}"]
-        if symbol:
-            lines.append(f"Symbol: {symbol}")
-        lines.append("----")
-        lines.append(str(msg))
-        self.send_message("\n".join(lines))
-
-    def error(self, error_msg, context=None):
-        """Send an error message."""
-        time = self._now_str()
-        lines = [f"❌ Error at {time}"]
-        if context:
-            lines.append(f"Context: {context}")
-        lines.append("----")
-        lines.append(str(error_msg))
-        self.send_message("\n".join(lines))
-
-    def trade_event(self, event_type, broker, symbol, details):
-        """
-        Send trade-related event: open, close, SL/TP, orphan, etc.
-        """
-        time = self._now_str()
-        em = {
-            "Opened": "🟢",
-            "Closed": "🔵",
-            "SL Hit": "🔴",
-            "TP Hit": "🟣",
-            "Orphan": "⚫️",
-        }.get(event_type, "ℹ️")
-        lines = [
-            f"{em} Trade {event_type} at {time}",
-            f"Broker: {broker}",
-            f"Symbol: {symbol}",
-            "----"
-        ]
-        for k, v in details.items():
-            lines.append(f"{k.title()}: {v}")
-        self.send_message("\n".join(lines))
 
     def daily_report(self, balances, trade_stats):
         """
@@ -94,15 +54,61 @@ class TeleBot:
         self.send_message("\n".join(lines))
 
 
-# test client 
-if __name__ == "__main__":
-    bot = TeleBot()
-    bot.alert("This is a test alert!", symbol="BTCUSD", critical=True)
-    bot.error("API timed out when requesting tick data", context="worker_proc(fxtm)")
-    bot.trade_event("Opened", "icmarkets", "BTCUSD", {
-        "side": "buy", "lot": 0.1, "entry": 58000
-    })
-    bot.daily_report(
-        balances={"icmarkets": 12232.42, "exness": 13500.51},
-        trade_stats={"total": 5, "winrate": "60%"}
-    )
+    def open_success(self, sell_tr, buy_tr):
+        lines = [f"🟢 Trade pair opened successfully on {self.symbol}: {sell_tr.broker}<->{buy_tr.broker}",
+                 f"----------------",
+                 f"Time: {self._now_str()}",
+                 f"Divergence: {sell_tr.entry_price - buy_tr.entry_price}"
+        ]
+        self.send_message("\n".join(lines))
+
+
+    def open_fail(self, sell_tr, buy_tr):
+        lines = [f"🟠 Trade pair failed on {self.symbol}: {sell_tr.broker}<->{buy_tr.broker}",
+                 f"----------------",
+                 f"Time: {self._now_str()}",
+                 f"sell: {sell_tr.status} ({sell_tr.error})",
+                 f"buy: {buy_tr.status} ({buy_tr.error})"
+        ]
+        self.send_message("\n".join(lines))
+    
+
+    def open_orphan(self, trade):
+        lines = [f"🔴 Opened a orphan leg on {trade.broker} for {self.symbol}",
+                 f"----------------",
+                 f"Time: {self._now_str()}",
+                 f"PnL: {trade.pnl}"
+        ]
+        self.send_message("\n".join(lines))
+
+    
+    def close_trade(self, sell_tr, buy_tr):
+        lines = [f"🟣 Closed trade pair on {self.symbol}: {sell_tr.broker}<->{buy_tr.broker}",
+                 f"----------------",
+                 f"Time: {self._now_str()}",
+                 f"PnL: {sell_tr.pnl + buy_tr.pnl}"
+        ]
+        self.send_message("\n".join(lines))
+
+
+    def open_lim(self, lim_tr, win_rate):
+        lines = [f"🟢 Opened LIM trade on {self.symbol}: {lim_tr.broker}",
+                 f"----------------",
+                 f"Time: {self._now_str()}",
+                 f"Win Rate: {win_rate}%"
+        ]
+        self.send_message("\n".join(lines))
+
+    
+    def close_lim(self, lim_tr):
+        lines = [f"🟣 Closed LIM trade on {self.symbol}: {lim_tr.broker}",
+                 f"----------------",
+                 f"Time: {self._now_str()}",
+                 f"PnL +/-: {lim_tr.pnl}"
+        ]
+        self.send_message("\n".join(lines))
+
+
+    def set_asset(self, asset):
+        self.symbol = asset
+

@@ -8,18 +8,20 @@ import hashlib
 import random
 import logging
 
-
+from telebot import TeleBot
 from trade import Trade
 from lim import open_lim, sync_lim_trades
 
 logger = logging.getLogger("arbitrage_bot")
+telebot = TeleBot()
 
 
-def master_proc(asset_config, worker_cmd_queues, worker_resp_queues):
+def master_proc(asset, asset_config, worker_cmd_queues, worker_resp_queues):
     open_trades       = [] 
     closed_trades     = []
     open_lim_trades   = [] 
     closed_lim_trades = []
+    telebot.set_asset(asset)
 
     try:
         while True:
@@ -28,21 +30,21 @@ def master_proc(asset_config, worker_cmd_queues, worker_resp_queues):
             price_matrix, balances_df = get_worker_ticks(worker_resp_queues)
 
             # Open new trades
-            open_trades     = open_available_trades(asset_config, price_matrix, balances_df,
-                                                    open_trades, worker_cmd_queues, worker_resp_queues)
+            open_trades = open_available_trades(asset_config, price_matrix, balances_df,
+                                                open_trades, worker_cmd_queues, worker_resp_queues)
             open_lim_trades = open_lim(open_lim_trades, closed_lim_trades, closed_trades,
                                        asset_config, balances_df, price_matrix,
-                                       worker_cmd_queues, worker_resp_queues)
+                                       worker_cmd_queues, worker_resp_queues, telebot)
 
             # Close eligible trades
             closed_trades, open_trades = close_available_trades(open_trades, closed_trades, price_matrix,
                                                                 worker_cmd_queues, worker_resp_queues)
 
-            # 4. Sync & clean up
+            # Sync & clean up
             broker_positions = request_broker_positions(worker_cmd_queues, worker_resp_queues)
             closed_trades, open_trades = sync_arb_trades(closed_trades, open_trades, broker_positions)
             closed_lim_trades, open_lim_trades = sync_lim_trades(closed_lim_trades, open_lim_trades,
-                                                                 broker_positions, price_matrix)
+                                                                 broker_positions, price_matrix, telebot)
             clean_rogue_trades(open_trades, open_lim_trades, broker_positions, worker_cmd_queues, 
                                worker_resp_queues)
             
@@ -232,20 +234,24 @@ def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queue
     # Check responses
     if sell_trade_resp.status == "open" and buy_trade_resp.status == "open":
         logger.info(f"Trade pair opened successfully: {sell_broker}<->{buy_broker}")
+        telebot.open_success(sell_trade_resp, buy_trade_resp)
     else:
         logger.warning(
             f"Trade pair failed! sell: {sell_trade_resp.status} ({sell_trade_resp.error}), "
             f"buy: {buy_trade_resp.status} ({buy_trade_resp.error})"
         )
+        telebot.open_fail(sell_trade_resp, buy_trade_resp)
         # Flatten any "orphan" leg
         if sell_trade_resp.status == "open":
             logger.warning(f"Orphan sell leg opened on {sell_broker}. Attempting immediate close...")
             sell_trade_resp = close_leg(sell_trade_resp, worker_cmd_queues, worker_resp_queues)
             buy_trade_resp.status = "closed"
+            telebot.open_orphan(sell_trade_resp)
         if buy_trade_resp.status == "open":
             logger.warning(f"Orphan buy leg opened on {buy_broker}. Attempting immediate close...")
             buy_trade_resp.status = close_leg(buy_trade_resp, worker_cmd_queues, worker_resp_queues)
             sell_trade_resp.status == "closed"
+            telebot.open_orphan(buy_trade_resp)
 
     return (sell_trade_resp, buy_trade_resp)
 
@@ -275,6 +281,7 @@ def close_available_trades(open_trades, closed_trades, price_matrix, worker_cmd_
         if sell_tr.status == "closed" and buy_tr.status == "closed":
             updated_closed_trades.append((sell_tr, buy_tr))
             to_remove_indices.append(idx)
+            telebot.close_trade(sell_tr, buy_tr)
 
     # Remove by index in reverse to avoid shifting
     for idx in sorted(to_remove_indices, reverse=True):

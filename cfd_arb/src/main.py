@@ -26,7 +26,7 @@ def main():
         worker_cmd_queues[broker_name] = cmd_q
         worker_resp_queues[broker_name] = resp_q
 
-    master_proc(asset_config, worker_cmd_queues, worker_resp_queues)
+    master_proc(args.asset, asset_config, worker_cmd_queues, worker_resp_queues)
 
 
 def parse_args():

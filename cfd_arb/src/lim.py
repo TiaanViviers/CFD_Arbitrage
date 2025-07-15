@@ -11,7 +11,7 @@ MAX_WINRATE = 0.65
 BROKERS = ["icmarkets", "exness", "fxtm", "eightcap", "xm"]
 
 def open_lim(open_lim, closed_lim, closed_trades, asset_conf, balances_df, price_matrix,
-            worker_cmd_queues, worker_resp_queues):
+            worker_cmd_queues, worker_resp_queues, telebot):
     for broker in BROKERS:
         if has_lim(broker, open_lim):
             continue
@@ -20,7 +20,8 @@ def open_lim(open_lim, closed_lim, closed_trades, asset_conf, balances_df, price
             lim_trade = init_lim_trade(broker, asset_conf, balances_df, price_matrix)
             lim_trade = place_lim_trade(lim_trade, worker_cmd_queues, worker_resp_queues)
             if lim_trade.status == "open":
-                logger
+                logger.info(f"Opened LIM Trade on {lim_trade.broker}")
+                telebot.open_lim(lim_trade, winrate)
                 open_lim.append(lim_trade)
     
     return open_lim
@@ -145,11 +146,11 @@ def place_lim_trade(trade, worker_cmd_queues, worker_resp_queues):
     return trade
 
 
-def sync_lim_trades(closed_lim, open_lim, broker_positions, price_matrix):
+def sync_lim_trades(closed_lim, open_lim, broker_positions, price_matrix, telebot):
     still_open, just_closed = find_closed_lim_trades(open_lim, broker_positions)
 
     for tr in just_closed:
-        finalize_lim_trade(tr, price_matrix)
+        finalize_lim_trade(tr, price_matrix, telebot)
     closed_lim.extend(just_closed)
 
     return closed_lim, still_open
@@ -171,7 +172,7 @@ def find_closed_lim_trades(open_lim, broker_positions):
     return still_open, just_closed
 
 
-def finalize_lim_trade(tr, price_matrix):
+def finalize_lim_trade(tr, price_matrix, telebot):
     # exit price from latest tick
     try:
         tick = price_matrix.loc[tr.broker]
@@ -185,5 +186,7 @@ def finalize_lim_trade(tr, price_matrix):
     # compute pnl
     tr.pnl = ((tr.exit_price - tr.entry_price) if tr.side == "buy"
               else (tr.entry_price - tr.exit_price)) * tr.lot_size
+    
+    telebot.close_lim(tr)
     
     return tr
