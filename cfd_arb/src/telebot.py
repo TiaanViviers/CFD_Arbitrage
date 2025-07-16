@@ -38,19 +38,18 @@ class TeleBot:
                 print(f"[TeleBot] Exception: {e}")
 
 
-    def daily_report(self, balances, trade_stats):
+    def daily_report(self, balances):
         """
         Send a daily summary (can call from a cron job or scheduled event).
         """
-        time = self._now_str()
-        lines = [f"📈 Daily Report — {time}", ""]
-        lines.append("Balances:")
+        lines = [
+            f"📈 Daily Report",
+            f"----------------",
+            f"Time: {self._now_str()}"
+            f"Balances:"
+        ]
         for broker, bal in balances.items():
             lines.append(f"- {broker}: ${bal:,.2f}")
-        lines.append("")
-        lines.append("Trade Stats:")
-        for stat, val in trade_stats.items():
-            lines.append(f"- {stat.title()}: {val}")
         self.send_message("\n".join(lines))
 
 
@@ -95,7 +94,7 @@ class TeleBot:
         lines = [f"🟢 Opened LIM trade on {self.symbol}: {lim_tr.broker}",
                  f"----------------",
                  f"Time: {self._now_str()}",
-                 f"Win Rate: {win_rate}%"
+                 f"Win Rate: {win_rate:.2f}%"
         ]
         self.send_message("\n".join(lines))
 

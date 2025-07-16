@@ -15,6 +15,7 @@ from lim import open_lim, sync_lim_trades
 logger = logging.getLogger("arbitrage_bot")
 telebot = TeleBot()
 
+LOCKFILE = "../locks/arb_lock_file.lock"
 
 def master_proc(asset, asset_config, worker_cmd_queues, worker_resp_queues):
     open_trades       = [] 
@@ -48,7 +49,11 @@ def master_proc(asset, asset_config, worker_cmd_queues, worker_resp_queues):
             clean_rogue_trades(open_trades, open_lim_trades, broker_positions, worker_cmd_queues, 
                                worker_resp_queues)
             
-            time.sleep(0.25)
+
+            # Daily telegram update
+            daily_update(balances_df, telebot)
+            
+            time.sleep(0.2)
 
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received — shutting down workers...")
@@ -73,6 +78,23 @@ def get_worker_ticks(worker_resp_queues):
     price_matrix = build_price_matrix(ticks)
     balances_df  = pd.Series(balances, name="balance").sort_index()
     return price_matrix, balances_df
+
+
+def daily_update(balances, telebot):
+    now = datetime.now(UTC)
+    if now.hour == 21 and now.minute == 3:
+        if daily_update_guard(now.strftime("%Y-%m-%d")):
+            telebot.daily_report(balances)
+
+def daily_update_guard(today_str):
+    """Return True if report should be sent; else False."""
+    with open(LOCKFILE, "r") as f:
+        if f.read().strip() == today_str:
+            return False
+    with open(LOCKFILE, "w") as f:
+        f.write(today_str)
+    return True
+
 
 
 def build_price_matrix(ticks):
