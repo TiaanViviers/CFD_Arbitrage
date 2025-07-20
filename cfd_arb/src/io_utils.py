@@ -1,41 +1,44 @@
+import os
 import json
 import yaml
 import csv
+from typing import Any, List, Dict
 
-import os
-from typing import List, Dict
+# --- Constants ---
+CONFIG_DIR = os.path.join("..", "config")
+DATA_DIR = os.path.join("..", "data")
+BROKER_CONFIG = os.path.join(CONFIG_DIR, "broker_config.json")
+ASSET_CONFIG = os.path.join(CONFIG_DIR, "asset_config.yml")
+
+TRADE_FIELDNAMES = [
+    "arb_id", "broker", "counter_party", "side", "allowed_slip", "lot_size",
+    "entry_price", "sl", "tp", "ticket", "asset", "exit_price", "status",
+    "open_time", "close_time", "pnl", "error"
+]
+
+VALID_TYPES = {"crypto", "index.us", "index.eu", "index.as"}
 
 
-CONFIG_DIR = "../config/"
-DATA_DIR = "../data/"
-
-
-def load_broker_config(asset: str) -> List[Dict]:
-    """
-    Load and validate the broker configuration from a JSON file.
+def load_broker_config(asset: str) -> List[Dict[str, Any]]:
+    """Load and validate broker configuration for the given asset.
 
     Args:
-        None
+        asset: Asset symbol (e.g., 'BTCUSD').
 
     Returns:
-        A list of validated broker configuration dictionaries.
+        List of broker configurations matching the asset.
 
     Raises:
-        ValueError: If required fields are missing or malformed.
+        ValueError: On missing/malformed fields.
         FileNotFoundError: If the config file is missing.
         json.JSONDecodeError: If the file isn't valid JSON.
     """
-    path = CONFIG_DIR + "broker_config.json"
-    with open(path, "r", encoding="utf-8") as f:
+    asset = asset.upper()
+    with open(BROKER_CONFIG, "r", encoding="utf-8") as f:
         config = json.load(f)
 
-    valid_types = {"crypto", "index.us", "index.eu", "index.as"}
-    asset = asset.upper()  # Just in case
-
-    filtered_brokers = []
-
+    filtered = []
     for entry in config:
-        # Validation as before
         if "broker" not in entry:
             raise ValueError("Missing 'broker' in config entry")
         if "terminal_path" not in entry:
@@ -43,70 +46,70 @@ def load_broker_config(asset: str) -> List[Dict]:
         if "symbols" not in entry or not isinstance(entry["symbols"], list):
             raise ValueError("Missing or invalid 'symbols' list in config entry")
 
-        # Filter symbols for this broker
-        matching_symbols = [
+        matches = [
             s for s in entry["symbols"]
             if s.get("internal", "").upper() == asset
         ]
-
-        for symbol in matching_symbols:
+        for symbol in matches:
             if "broker_symbol" not in symbol:
                 raise ValueError("Missing 'broker_symbol' in symbol entry")
             if "type" not in symbol:
-                raise ValueError(f"Symbol {symbol['internal']} is missing 'type'")
-            if symbol["type"] not in valid_types:
-                raise ValueError(f"Symbol {symbol['internal']} has invalid type '{symbol['type']}'")
-
-        # Only include this broker if they have the requested asset
-        if matching_symbols:
-            filtered_brokers.append({
+                raise ValueError(f"Symbol {symbol.get('internal', '')} is missing 'type'")
+            if symbol["type"] not in VALID_TYPES:
+                raise ValueError(
+                    f"Symbol {symbol.get('internal', '')} has invalid type '{symbol['type']}'"
+                )
+        if matches:
+            filtered.append({
                 "broker": entry["broker"],
                 "terminal_path": entry["terminal_path"],
-                "symbols": matching_symbols
+                "symbols": matches
             })
 
-    return filtered_brokers
+    return filtered
 
 
-def load_asset_config(asset: str) -> dict:
+def load_asset_config(asset: str) -> dict[str, Any]:
+    """Load config for a specific asset from asset_config.yml.
+
+    Args:
+        asset: Asset symbol to load config for.
+
+    Returns:
+        Dict of asset config settings.
+
+    Raises:
+        ValueError: If asset not found in config.
     """
-    Loads the config for a specific asset from asset_config.yml.
-    Returns a dict of settings for the asset.
-    Raises a clear error if asset is not found.
-    """
-    path = CONFIG_DIR + "asset_config.yml"
-    with open(path, "r") as f:
+    with open(ASSET_CONFIG, "r") as f:
         config = yaml.safe_load(f)
-
     if asset not in config:
         raise ValueError(f"Asset '{asset}' not found in asset_config.yml!")
     return config[asset]
 
 
-def write_closed_trades(asset, arb_trades, lim_trades):
-    filename = DATA_DIR + asset + ".csv"
+def write_closed_trades(asset: str, arb_trades: List[tuple], lim_trades: List[Any]) -> None:
+    """Append closed trades to the CSV file for the given asset.
 
-    # All fields in the Trade class
-    fieldnames = [
-        "arb_id", "broker", "counter_party", "side", "allowed_slip", "lot_size",
-        "entry_price", "sl", "tp", "ticket", "asset", "exit_price", "status",
-        "open_time", "close_time", "pnl", "error"
-    ]
-
-    # Determine if we need to write the header
+    Args:
+        asset: Asset symbol (used as filename).
+        arb_trades: List of (sell, buy) tuples.
+        lim_trades: List of single-leg trades.
+    """
+    filename = os.path.join(DATA_DIR, f"{asset}.csv")
     file_exists = os.path.exists(filename)
     write_header = not file_exists or os.path.getsize(filename) == 0
 
     with open(filename, mode='a', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer = csv.DictWriter(csvfile, fieldnames=TRADE_FIELDNAMES)
         if write_header:
             writer.writeheader()
 
-        # Write closed arb trades (as 2 rows per tuple)
+        # Write arb trades (each tuple = (sell, buy))
         for sell, buy in arb_trades:
-            for trade in [sell, buy]:
-                writer.writerow({f: getattr(trade, f, None) for f in fieldnames})
+            for trade in (sell, buy):
+                writer.writerow({f: getattr(trade, f, None) for f in TRADE_FIELDNAMES})
 
-        # Write closed lim trades (single leg trades)
+        # Write lim trades (single-leg)
         for trade in lim_trades:
-            writer.writerow({f: getattr(trade, f, None) for f in fieldnames})
+            writer.writerow({f: getattr(trade, f, None) for f in TRADE_FIELDNAMES})

@@ -18,9 +18,9 @@ logger = logging.getLogger("arbitrage_bot")
 telebot = TeleBot()
 
 def master_proc(asset, asset_config, worker_cmd_queues, worker_resp_queues):
-    open_trades       = [] 
+    open_trades       = []
     closed_trades     = []
-    open_lim_trades   = [] 
+    open_lim_trades   = []
     closed_lim_trades = []
     telebot.set_asset(asset)
 
