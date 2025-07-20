@@ -1,9 +1,13 @@
 import json
 import yaml
+import csv
+
+import os
 from typing import List, Dict
 
 
 CONFIG_DIR = "../config/"
+DATA_DIR = "../data/"
 
 
 def load_broker_config(asset: str) -> List[Dict]:
@@ -77,3 +81,32 @@ def load_asset_config(asset: str) -> dict:
     if asset not in config:
         raise ValueError(f"Asset '{asset}' not found in asset_config.yml!")
     return config[asset]
+
+
+def write_closed_trades(asset, arb_trades, lim_trades):
+    filename = DATA_DIR + asset + ".csv"
+
+    # All fields in the Trade class
+    fieldnames = [
+        "arb_id", "broker", "counter_party", "side", "allowed_slip", "lot_size",
+        "entry_price", "sl", "tp", "ticket", "asset", "exit_price", "status",
+        "open_time", "close_time", "pnl", "error"
+    ]
+
+    # Determine if we need to write the header
+    file_exists = os.path.exists(filename)
+    write_header = not file_exists or os.path.getsize(filename) == 0
+
+    with open(filename, mode='a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+
+        # Write closed arb trades (as 2 rows per tuple)
+        for sell, buy in arb_trades:
+            for trade in [sell, buy]:
+                writer.writerow({f: getattr(trade, f, None) for f in fieldnames})
+
+        # Write closed lim trades (single leg trades)
+        for trade in lim_trades:
+            writer.writerow({f: getattr(trade, f, None) for f in fieldnames})

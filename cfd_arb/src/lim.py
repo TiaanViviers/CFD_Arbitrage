@@ -143,7 +143,7 @@ def place_lim_trade(trade, worker_cmd_queues, worker_resp_queues):
     else:
         logger.info(f"LIM trade failed on {trade.broker}..")
     
-    return trade
+    return trade_resp
 
 
 def sync_lim_trades(closed_lim, open_lim, broker_positions, price_matrix, telebot):

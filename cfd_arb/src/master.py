@@ -10,12 +10,12 @@ import logging
 
 from telebot import TeleBot
 from trade import Trade
+import io_utils as io
 from lim import open_lim, sync_lim_trades
+from trading_schedules import is_trading_time
 
 logger = logging.getLogger("arbitrage_bot")
 telebot = TeleBot()
-
-LOCKFILE = "../locks/arb_lock_file.lock"
 
 def master_proc(asset, asset_config, worker_cmd_queues, worker_resp_queues):
     open_trades       = [] 
@@ -26,6 +26,13 @@ def master_proc(asset, asset_config, worker_cmd_queues, worker_resp_queues):
 
     try:
         while True:
+            # Check if markets are open
+            if not is_trading_time(asset):
+                # Daily telegram update
+                daily_update(closed_trades, closed_lim_trades, balances_df, telebot)
+                time.sleep(10)
+                continue
+            
             #Data collection
             request_worker_ticks(worker_cmd_queues)
             price_matrix, balances_df = get_worker_ticks(worker_resp_queues)
@@ -48,18 +55,17 @@ def master_proc(asset, asset_config, worker_cmd_queues, worker_resp_queues):
                                                                  broker_positions, price_matrix, telebot)
             clean_rogue_trades(open_trades, open_lim_trades, broker_positions, worker_cmd_queues, 
                                worker_resp_queues)
-            
-
-            # Daily telegram update
-            daily_update(balances_df, telebot)
-            
-            time.sleep(0.2)
 
     except KeyboardInterrupt:
-        logger.info("Keyboard interrupt received — shutting down workers...")
-        for broker, cmd_q in worker_cmd_queues.items():
-            cmd_q.put({"action": "shutdown"})
-        logger.info("Shutdown commands sent. Exiting master_proc.")
+        logger.info("Keyboard interrupt received...")
+        io.write_closed_trades(asset, closed_trades, closed_lim_trades)
+        shutdown_workers(worker_cmd_queues)
+        
+
+def shutdown_workers(worker_cmd_queues):
+    for broker, cmd_q in worker_cmd_queues.items():
+        cmd_q.put({"action": "shutdown"})
+    logger.info("Shutdown commands sent. Exiting master_proc.")
 
 
 def request_worker_ticks(worker_cmd_queues):
@@ -80,21 +86,12 @@ def get_worker_ticks(worker_resp_queues):
     return price_matrix, balances_df
 
 
-def daily_update(balances, telebot):
+def daily_update(closed_arb_trades, closed_lim_trades, balances, telebot):
     now = datetime.now(UTC)
-    if now.hour == 21 and now.minute == 3:
-        if daily_update_guard(now.strftime("%Y-%m-%d")):
-            telebot.daily_report(balances)
-
-def daily_update_guard(today_str):
-    """Return True if report should be sent; else False."""
-    with open(LOCKFILE, "r") as f:
-        if f.read().strip() == today_str:
-            return False
-    with open(LOCKFILE, "w") as f:
-        f.write(today_str)
-    return True
-
+    if now.hour == 21 and now.minute == 3 and balances is not None:
+        num_closed_arbs = len(closed_arb_trades)
+        num_closed_lims = len(closed_lim_trades)
+        telebot.daily_report(num_closed_arbs, num_closed_lims, balances)
 
 
 def build_price_matrix(ticks):
@@ -268,13 +265,10 @@ def place_trade_pair(sell_trade, buy_trade, worker_cmd_queues, worker_resp_queue
             logger.warning(f"Orphan sell leg opened on {sell_broker}. Attempting immediate close...")
             sell_trade_resp = close_leg(sell_trade_resp, worker_cmd_queues, worker_resp_queues)
             buy_trade_resp.status = "closed"
-            telebot.open_orphan(sell_trade_resp)
         if buy_trade_resp.status == "open":
             logger.warning(f"Orphan buy leg opened on {buy_broker}. Attempting immediate close...")
             buy_trade_resp.status = close_leg(buy_trade_resp, worker_cmd_queues, worker_resp_queues)
             sell_trade_resp.status == "closed"
-            telebot.open_orphan(buy_trade_resp)
-
     return (sell_trade_resp, buy_trade_resp)
 
 
@@ -431,10 +425,15 @@ def clean_rogue_trades(open_trades, open_lim_trades, broker_positions,
     Finds any live broker positions whose magic IDs aren’t in open_trades
     or open_lim_trades, and closes them.
     """
-    arb_ids = {tr.arb_id for s,b in open_trades for tr in (s,b)}
-    lim_ids = {tr.arb_id for tr in open_lim_trades}
-    tracked_ids = arb_ids | lim_ids
+    # collect all current trade ids we have
+    tracked_ids = []
+    for sell, buy in open_trades:
+        tracked_ids.append(sell.arb_id)
+        tracked_ids.append(buy.arb_id)
+    for lim in open_lim_trades:
+        tracked_ids.append(lim.arb_id)
 
+    # compare to current open positions at broker
     for broker, positions in broker_positions.items():
         for pos in positions:
             magic = pos["magic"]
@@ -444,6 +443,8 @@ def clean_rogue_trades(open_trades, open_lim_trades, broker_positions,
             logger.warning(f"[sync] Rogue position on {broker}: magic={magic}, closing now..")
             stub = Trade(
                 arb_id=magic,
+                counter_party="Rogue",
+                entry_price=0,
                 broker=broker,
                 ticket=pos["ticket"],
                 lot_size=pos["volume"],

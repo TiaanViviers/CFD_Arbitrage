@@ -38,14 +38,16 @@ class TeleBot:
                 print(f"[TeleBot] Exception: {e}")
 
 
-    def daily_report(self, balances):
+    def daily_report(self, num_closed_arbs, num_closed_lims, balances):
         """
         Send a daily summary (can call from a cron job or scheduled event).
         """
         lines = [
-            f"📈 Daily Report",
+            f"📈 Daily Report for {self.symbol}",
             f"----------------",
-            f"Time: {self._now_str()}"
+            f"Time: {self._now_str()},",
+            f"Num of closed arb events: {num_closed_arbs}",
+            f"Num of closed lim trades: {num_closed_lims}",
             f"Balances:"
         ]
         for broker, bal in balances.items():
@@ -57,26 +59,18 @@ class TeleBot:
         lines = [f"🟢 Trade pair opened successfully on {self.symbol}: {sell_tr.broker}<->{buy_tr.broker}",
                  f"----------------",
                  f"Time: {self._now_str()}",
-                 f"Divergence: {sell_tr.entry_price - buy_tr.entry_price}"
+                 f"Divergence: {(sell_tr.entry_price - buy_tr.entry_price):.2f}",
+                 f"Lot Size: {sell_tr.lot_size}"
         ]
         self.send_message("\n".join(lines))
 
 
     def open_fail(self, sell_tr, buy_tr):
-        lines = [f"🟠 Trade pair failed on {self.symbol}: {sell_tr.broker}<->{buy_tr.broker}",
+        lines = [f"🔴 Trade pair failed on {self.symbol}: {sell_tr.broker}<->{buy_tr.broker}",
                  f"----------------",
                  f"Time: {self._now_str()}",
                  f"sell: {sell_tr.status} ({sell_tr.error})",
                  f"buy: {buy_tr.status} ({buy_tr.error})"
-        ]
-        self.send_message("\n".join(lines))
-    
-
-    def open_orphan(self, trade):
-        lines = [f"🔴 Opened a orphan leg on {trade.broker} for {self.symbol}",
-                 f"----------------",
-                 f"Time: {self._now_str()}",
-                 f"PnL: {trade.pnl}"
         ]
         self.send_message("\n".join(lines))
 
@@ -85,7 +79,7 @@ class TeleBot:
         lines = [f"🟣 Closed trade pair on {self.symbol}: {sell_tr.broker}<->{buy_tr.broker}",
                  f"----------------",
                  f"Time: {self._now_str()}",
-                 f"PnL: {sell_tr.pnl + buy_tr.pnl}"
+                 f"PnL: {(sell_tr.pnl + buy_tr.pnl):.2f}"
         ]
         self.send_message("\n".join(lines))
 
@@ -103,7 +97,7 @@ class TeleBot:
         lines = [f"🟣 Closed LIM trade on {self.symbol}: {lim_tr.broker}",
                  f"----------------",
                  f"Time: {self._now_str()}",
-                 f"PnL +/-: {lim_tr.pnl}"
+                 f"PnL +/-: {lim_tr.pnl:.2f}"
         ]
         self.send_message("\n".join(lines))
 

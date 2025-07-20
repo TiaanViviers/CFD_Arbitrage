@@ -73,6 +73,7 @@ class MT5BrokerInterface:
         with self._lock:
             try:
                 if not self.order_check_ping():
+                    #self.logger.warning(f"Market closed for {self.symbol} on {self.name}")
                     return None
                 
                 tick = mt5.symbol_info_tick(self.symbol)
@@ -108,10 +109,10 @@ class MT5BrokerInterface:
                 "price":        info.ask,
                 "deviation":    300,
                 "type_time":    mt5.ORDER_TIME_GTC,
-                "type_filling": mt5.ORDER_FILLING_IOC,
+                "type_filling": self.filling_type,
             }
             res = mt5.order_check(req)
-            return (res is not None and res.retcode == mt5.TRADE_RETCODE_DONE)
+            return (res is not None and res.retcode == 0)
         
 
     def get_balance(self, retries=2, retry_delay=0.05):

@@ -17,6 +17,7 @@ def main():
 
     worker_cmd_queues = {}
     worker_resp_queues = {}
+    worker_procs = {}
     for broker_conf in broker_config:
         broker_name = broker_conf['broker']
         cmd_q = mp.Queue()
@@ -25,8 +26,17 @@ def main():
         p.start()
         worker_cmd_queues[broker_name] = cmd_q
         worker_resp_queues[broker_name] = resp_q
+        worker_procs[broker_name] = p
 
-    master_proc(args.asset, asset_config, worker_cmd_queues, worker_resp_queues)
+    try:
+        master_proc(args.asset, asset_config, worker_cmd_queues, worker_resp_queues)
+    finally:
+        # After master_proc returns, join workers
+        for broker, proc in worker_procs.items():
+            proc.join(timeout=5)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join()
 
 
 def parse_args():
