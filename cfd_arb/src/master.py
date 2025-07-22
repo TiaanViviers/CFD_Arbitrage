@@ -40,6 +40,7 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
     closed_trades: list = []
     open_lim_trades: list = []
     closed_lim_trades: list = []
+    balances_df: pd.Series = {}
     telebot.set_asset(asset)
 
     try:
