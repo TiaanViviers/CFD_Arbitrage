@@ -10,6 +10,7 @@ import MetaTrader5 as mt5
 import threading
 from datetime import datetime, timedelta, UTC
 import time
+import math
 
 ################################ Constants / Config ################################
 
@@ -28,9 +29,16 @@ class MT5BrokerInterface:
         self.path = path
         self.symbol = symbol
         self.logger = logger
+        #symbol info
         self.digits = None
+        self.contract_size = None
+        self.min_lot = None
+        #account info
+        self.leverage = None
         self.filling_type = None
+
         self.blocked_until = None
+        self._last_price = None
         self._lock = threading.RLock()
         self.connect()
 
@@ -50,8 +58,11 @@ class MT5BrokerInterface:
                             f"[{self.name}] Could not subscribe to symbol {self.symbol}"
                         )
                     else:
-                        self.get_digits()
-                        self.get_filling_type()
+                        self._get_filling_type()
+                        sym_info = self._get_symbol_info()
+                        self._set_symbol_info(sym_info)
+                        acc_info = self._get_account_info()
+                        self._set_account_info(acc_info)
                     return True
                 else:
                     e = mt5.last_error()
@@ -80,29 +91,6 @@ class MT5BrokerInterface:
                 )
 
 
-    def get_digits(self) -> None:
-        """
-        Query the number of decimals for this symbol.
-        """
-        info = mt5.symbol_info(self.symbol)
-        if info is None:
-            self.logger.warning(
-                f"[{self.name}] Could not get symbol info for {self.symbol}. Defaulting digits to 2."
-            )
-            self.digits = 2
-        else:
-            self.digits = info.digits
-
-
-    def get_filling_type(self) -> None:
-        """
-        Set order filling type from broker name (defaults to IOC).
-        """
-        self.filling_type = FILLING_TYPE_MAP.get(
-            self.name, mt5.ORDER_FILLING_IOC
-        )
-
-
     ########################## Market State & Query ############################
     def get_latest_tick(self):
         """
@@ -118,11 +106,14 @@ class MT5BrokerInterface:
                         f"[{self.name}] Dirty tick for {self.symbol}"
                     )
                     return None
+                
+                self._last_price = {"bid": tick.bid, "ask": tick.ask}
                 return {
                     "timestamp": datetime.now(UTC).isoformat(),
                     "bid": tick.bid,
                     "ask": tick.ask,
                 }
+            
             except Exception as e:
                 self.logger.error(
                     f"[{self.name}] Error fetching tick: {e}"
@@ -150,6 +141,23 @@ class MT5BrokerInterface:
             }
             res = mt5.order_check(req)
             return res is not None and res.retcode == 0
+
+
+    def get_capital_state(self, side: str = "buy") -> dict:
+        """
+        Fast account snapshot used by worker:
+            returns {"balance": float, "max_lot": float}
+        Exactly one mt5.account_info() call – no added latency.
+        """
+        info = mt5.account_info()
+        if not info:
+            return {"balance": 0.0, "max_lot": 0.0}
+
+        max_lot = self._calc_max_lot(info.margin_free, side)
+        return {
+            "balance": info.balance,
+            "max_lot": max_lot
+        }
 
 
     def get_balance(self, retries: int = 2, retry_delay: float = 0.05):
@@ -434,6 +442,31 @@ class MT5BrokerInterface:
         }
     
 
+    def _calc_max_lot(self, free_margin: float, side: str = "buy") -> float:
+        """
+        Convert current free-margin into the largest lot the broker will accept.
+        Uses cached last price – never queries MT5 again.
+        """
+        if free_margin <= 0 or not getattr(self, "_last_price", None):
+            return 0.0
+
+        if self._last_price == None:
+            return 0.0
+        price = (self._last_price["ask"] if side == "buy"
+                else self._last_price["bid"])
+        if price <= 0:
+            return 0.0
+
+        margin_per_lot = self.contract_size * price / self.leverage
+        if margin_per_lot <= 0:
+            return 0.0
+
+        raw_lot = free_margin / margin_per_lot
+        step    = self.min_lot
+        lot     = math.floor(raw_lot / step) * step
+        return round(max(lot, self.min_lot), 2)
+
+
     def _is_in_timeout(self) -> bool:
         """
         True if broker is currently blocked.
@@ -443,6 +476,90 @@ class MT5BrokerInterface:
             and datetime.now(UTC) < self.blocked_until
         )
     
+
+    def _get_symbol_info(self, max_attempts: int = 5, base_delay: float = 0.5):
+        """
+        Fetch symbol_info with retries and exponential back-off.
+
+        Returns:
+            mt5.symbol_info() object or None if not retrieved.
+        """
+        for attempt in range(1, max_attempts + 1):
+            info = mt5.symbol_info(self.symbol)
+            if info:
+                return info
+
+            self.logger.warning(
+                f"[{self.name}] Unable to fetch symbol info for {self.symbol} "
+                f"(attempt {attempt}/{max_attempts})"
+            )
+            # exponential back-off
+            time.sleep(base_delay * (2 ** (attempt - 1)))
+
+        self.logger.error(
+            f"[{self.name}] Failed to obtain symbol info for {self.symbol} "
+            f"after {max_attempts} attempts."
+        )
+        return None
+    
+
+    def _set_symbol_info(self, info):
+        if info is None:
+            self.logger.warning("Symbol info is None, going to default settings.")
+            self.digits        = 2
+            self.contract_size = 1.0
+            self.min_lot       = 0.01
+        else:
+            self.digits        = info.digits
+            self.contract_size = info.trade_contract_size
+            self.min_lot       = info.volume_min
+
+
+    def _get_account_info(self, max_attempts: int = 5, base_delay: float = 0.5):
+        """
+        Fetch account_info with retries and exponential back-off.
+
+        Returns:
+            mt5.account_info() object or None if not retrieved.
+        """
+        for attempt in range(1, max_attempts + 1):
+            info = mt5.account_info()
+            if info:
+                return info
+
+            self.logger.warning(
+                f"[{self.name}] Unable to fetch account info for {self.name}: {self.symbol} "
+                f"(attempt {attempt}/{max_attempts})"
+            )
+            # exponential back-off
+            time.sleep(base_delay * (2 ** (attempt - 1)))
+
+        self.logger.error(
+            f"[{self.name}] Failed to obtain symbol info for {self.symbol} "
+            f"after {max_attempts} attempts."
+        )
+        return None
+            
+
+    def _set_account_info(self, info):
+        if info is None:
+            self.logger.warning("Account info is None, going to default settings.")
+            self.leverage = 100
+        else:
+            if info.leverage == 0:
+                self.leverage = 100
+            else:
+                self.leverage = info.leverage
+
+
+    def _get_filling_type(self) -> None:
+        """
+        Set order filling type from broker name (defaults to IOC).
+        """
+        self.filling_type = FILLING_TYPE_MAP.get(
+            self.name, mt5.ORDER_FILLING_IOC
+        )
+
 
     def __repr__(self):
         return (

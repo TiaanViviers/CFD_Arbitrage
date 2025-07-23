@@ -42,23 +42,23 @@ ASSET_SCHEDULES: Dict[str, Dict[int, List[Tuple[time, time]]]] = {
     },
 
     "GER40": {
-        0: [(time(0, 15), time(19, 59))],
-        1: [(time(0, 15), time(19, 59))],
-        2: [(time(0, 15), time(19, 59))],
-        3: [(time(0, 15), time(19, 59))],
-        4: [(time(0, 15), time(19, 59))],
+        0: [(time(0, 20), time(19, 59))],
+        1: [(time(0, 20), time(19, 59))],
+        2: [(time(0, 20), time(19, 59))],
+        3: [(time(0, 20), time(19, 59))],
+        4: [(time(0, 20), time(19, 59))],
         5: [],
         6: [],
     },
 
     "JP225": {
-        0: [(time(0, 0), time(20, 59)), (time(22, 0), time(23, 59))],
-        1: [(time(0, 0), time(20, 59)), (time(22, 0), time(23, 59))],
-        2: [(time(0, 0), time(20, 59)), (time(22, 0), time(23, 59))],
-        3: [(time(0, 0), time(20, 59)), (time(22, 0), time(23, 59))],
+        0: [(time(0, 0), time(20, 59)), (time(22, 5), time(23, 59))],
+        1: [(time(0, 0), time(20, 59)), (time(22, 5), time(23, 59))],
+        2: [(time(0, 0), time(20, 59)), (time(22, 5), time(23, 59))],
+        3: [(time(0, 0), time(20, 59)), (time(22, 5), time(23, 59))],
         4: [(time(0, 0), time(20, 0))],
         5: [],
-        6: [(time(22, 0), time(23, 59))],
+        6: [(time(22, 5), time(23, 59))],
     },
 }
 

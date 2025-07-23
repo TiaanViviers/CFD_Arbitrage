@@ -31,6 +31,7 @@ def worker_proc(broker_conf, cmd_queue, resp_queue):
             _handle_get_open_positions(broker, resp_queue, logger)
         elif action == "shutdown":
             logger.info(f"Exiting worker for broker {broker.name}")
+            broker.shutdown()
             break
 
 
@@ -47,12 +48,19 @@ def _init_broker(broker_config, logger) -> MT5BrokerInterface:
 
 ################################ Command Handlers ################################
 def _get_tick(broker, resp_queue) -> None:
-    """Put latest tick and balance on response queue."""
+    """
+    Put latest tick + balance + max_lot on the response queue.
+    One account-info call, one tick call — minimal latency.
+    """
+    snap = broker.get_capital_state()
+    tick = broker.get_latest_tick()
+
     resp_queue.put({
-        "type": "tick",
-        "broker": broker.name,
-        "tick": broker.get_latest_tick(),
-        "balance": broker.get_balance()
+        "type":    "tick",
+        "broker":  broker.name,
+        "tick":    tick,
+        "balance": snap["balance"],
+        "max_lot": snap["max_lot"],
     })
 
 

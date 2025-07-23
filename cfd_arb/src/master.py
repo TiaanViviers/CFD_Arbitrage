@@ -53,12 +53,12 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
 
             # ---------- Data collection ----------
             _request_worker_ticks(worker_cmd_queues)
-            price_matrix, balances_df = _get_worker_ticks(worker_resp_queues)
+            price_matrix, balances_df, maxlot_series = _get_worker_ticks(worker_resp_queues)
 
             # ---------- Trade opening ----------
             open_trades = _open_available_trades(
-                asset_config, price_matrix, balances_df, open_trades,
-                worker_cmd_queues, worker_resp_queues
+                asset_config, price_matrix, balances_df, maxlot_series, 
+                open_trades, worker_cmd_queues, worker_resp_queues
             )
             open_lim_trades = open_lim(
                 open_lim_trades, closed_lim_trades, closed_trades, asset_config,
@@ -118,13 +118,18 @@ def _get_worker_ticks(worker_resp_queues: dict) -> tuple[pd.DataFrame, pd.Series
     """
     ticks = {}
     balances = {}
+    max_lots = {}
+
     for broker, resp_q in worker_resp_queues.items():
-        resp = resp_q.get()
-        ticks[broker] = resp.get("tick")
-        balances[broker] = resp.get("balance")
+        resp              = resp_q.get()
+        ticks[broker]     = resp.get("tick")
+        balances[broker]  = resp.get("balance")
+        max_lots[broker]  = resp.get("max_lot", 0.0)
+
     price_matrix = _build_price_matrix(ticks)
     balances_df = pd.Series(balances, name="balance").sort_index()
-    return price_matrix, balances_df
+    maxlot_series = pd.Series(max_lots,  name="max_lot").sort_index()
+    return price_matrix, balances_df, maxlot_series
 
 
 def _build_price_matrix(ticks: dict) -> pd.DataFrame:
@@ -140,9 +145,9 @@ def _build_price_matrix(ticks: dict) -> pd.DataFrame:
 
 ################################ Trade Opening #################################
 def _open_available_trades(asset_config: dict, price_matrix: pd.DataFrame, 
-                           balances_df: pd.Series,open_trades: list,
-                           worker_cmd_queues: dict, worker_resp_queues: dict
-                        ) -> list:
+                           balances_df: pd.Series, maxlot_series: pd.Series,
+                           open_trades: list,worker_cmd_queues: dict,
+                           worker_resp_queues: dict) -> list:
     """
     Attempt to open eligible arbitrage trades based on divergence and limits.
     """
@@ -152,8 +157,8 @@ def _open_available_trades(asset_config: dict, price_matrix: pd.DataFrame,
 
     for sell_broker, buy_broker, div in candidates:
         if _can_open_trade(open_trades, sell_broker, buy_broker):
-            sell_lot = _calculate_lots(sell_broker, balances_df, asset_config, div)
-            buy_lot = _calculate_lots(buy_broker, balances_df, asset_config, div)
+            sell_lot = _calculate_lots(sell_broker, balances_df, maxlot_series, asset_config, div)
+            buy_lot = _calculate_lots(buy_broker, balances_df, maxlot_series, asset_config, div)
             lot_size = min(sell_lot, buy_lot)
             if lot_size < asset_config["min_lot"]:
                 continue
@@ -224,8 +229,8 @@ def _can_open_trade(open_trades: list, sell_broker: str,
     return sell_broker_open < max_trades and buy_broker_open < max_trades
 
 
-def _calculate_lots(broker: str, balances_df: pd.Series, asset_conf: dict,
-                    current_div: float, max_trades: int = 2) -> float:
+def _calculate_lots(broker: str, balances_df: pd.Series, maxlot_series: pd.Series, 
+                    asset_conf: dict, current_div: float, max_trades: int = 2) -> float:
     """
     Lot sizing so max drawdown on this trade is never more than per-trade allocation.
     """
@@ -237,11 +242,16 @@ def _calculate_lots(broker: str, balances_df: pd.Series, asset_conf: dict,
         return 0.0
 
     raw_lot = capital_per_trade / move_to_stop
-    if raw_lot < asset_conf["min_lot"]:
-        return 0.0
-
     steps = math.floor(raw_lot / asset_conf["min_lot"])
-    return round(steps * asset_conf["min_lot"], 2)
+
+    lot_cap = round(steps * asset_conf["min_lot"], 2)
+    margin_cap =  maxlot_series.get(broker, 0.0)
+    final_lot = min(lot_cap, margin_cap)
+
+    if final_lot < asset_conf["min_lot"]:
+        return 0.0
+    return final_lot
+
 
 
 def _init_trade(broker: str, counter_party: str, side: str, lot: float,
@@ -360,8 +370,18 @@ def _mean_reverted(sell_broker: str, buy_broker: str,price_matrix: pd.DataFrame,
     """
     True if divergence (buy_bid - sell_ask) <= exit_threshold (asset-specific).
     """
+    if (sell_broker not in price_matrix.index or
+        buy_broker not in price_matrix.index):
+        # Can't judge mean reversion if either tick is missing
+        return False
+
     sell_ask = price_matrix.loc[sell_broker, "ask"]
-    buy_bid = price_matrix.loc[buy_broker, "bid"]
+    buy_bid  = price_matrix.loc[buy_broker, "bid"]
+
+    # Defensive
+    if pd.isna(sell_ask) or pd.isna(buy_bid):
+        return False
+
     divergence = buy_bid - sell_ask
     return divergence <= exit_threshold
 
