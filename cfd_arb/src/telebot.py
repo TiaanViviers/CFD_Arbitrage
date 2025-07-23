@@ -1,5 +1,5 @@
 import threading
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 import requests
 
 from trade import Trade
@@ -61,11 +61,11 @@ class TeleBot:
             f"Total LIM Trades: {len(closed_lims)}",
             f"#LIM Trades Today: {self._get_today_lims(closed_lims)}\n",
             f"Total PnL: ${self._get_total_pnl(closed_arbs, closed_lims):.2f}",
-            f"Today's PnL: ${self._get_today_pnl(closed_arbs, closed_lims):.2f}"
+            f"Today's PnL: ${self._get_today_pnl(closed_arbs, closed_lims):.2f}",
             "----------------",
         ]
         for broker, bal in balances.items():
-            lines.append(
+            lines.extend(
                 f"{broker}:",
                 f"Balance ${bal:.2f}",
                 f"PnL: ${self._get_broker_pnl(broker, closed_arbs, closed_lims)}",
@@ -132,6 +132,153 @@ class TeleBot:
 
 
     ############################# Update Helpers ###############################
+    def _get_today_arbs(self, closed_arbs):
+        """
+        Count arbitrage trades closed after 21:00 UTC of the previous day.
+        Args:
+            closed_arbs: List of closed arbitrage trade pairs
+        Returns:
+            int: Number of trades closed after the cutoff time
+        """
+        now = datetime.now(UTC)
+        # Set cutoff time to 21:00 UTC of the previous day
+        cutoff = now.replace(hour=21, minute=0, second=0, microsecond=0)
+        if now.hour < 21:
+            cutoff = cutoff - timedelta(days=1)
+        
+        arbs = 0
+        for pair in closed_arbs:
+            # Parse the ISO format close time string
+            close_time = datetime.fromisoformat(pair[0].close_time)
+            if close_time >= cutoff:
+                arbs += 1
+        return arbs
+    
+
+    def _get_today_lims(self, closed_lims):
+        """
+        Count limit trades closed after 21:00 UTC of the previous day.
+        Args:
+            closed_lims: List of closed limit trades
+        Returns:
+            int: Number of trades closed after the cutoff time
+        """
+        now = datetime.now(UTC)
+        # Set cutoff time to 21:00 UTC of the previous day
+        cutoff = now.replace(hour=21, minute=0, second=0, microsecond=0)
+        if now.hour < 21:
+            cutoff = cutoff - timedelta(days=1)
+        
+        lims = 0
+        for trade in closed_lims:
+            close_time = datetime.fromisoformat(trade.close_time)
+            if close_time >= cutoff:
+                lims += 1
+        return lims
 
 
+    def _get_total_pnl(self, closed_arbs, closed_lims):
+        """
+        Calculate total PnL from closed arbitrage and lim trades.
+        Args:
+            closed_arbs: List of closed arbitrage trade pairs
+            closed_lims: List of closed limit trades
+        Returns:
+            float: Total PnL
+        """
+        total_pnl = 0.0
+        for pair in closed_arbs:
+            pnl = pair[0].pnl + pair[1].pnl
+            if pnl is not None:
+                total_pnl += pnl
+        
+        for trade in closed_lims:
+            if trade.pnl is not None:
+                total_pnl += trade.pnl
+        return total_pnl
 
+
+    def _get_today_pnl(self, closed_arbs, closed_lims):
+        """
+        Calculate today's PnL from closed arbitrage and lim trades.
+        Args:
+            closed_arbs: List of closed arbitrage trade pairs
+            closed_lims: List of closed limit trades
+        Returns:
+            float: Today's PnL
+        """
+        now = datetime.now(UTC)
+        cutoff = now.replace(hour=21, minute=0, second=0, microsecond=0)
+        if now.hour < 21:
+            cutoff = cutoff - timedelta(days=1)
+        
+        today_pnl = 0.0
+        for pair in closed_arbs:
+            close_time = datetime.fromisoformat(pair[0].close_time)
+            if close_time >= cutoff:
+                pnl = pair[0].pnl + pair[1].pnl
+                if pnl is not None:
+                    today_pnl += pnl
+        
+        for trade in closed_lims:
+            close_time = datetime.fromisoformat(trade.close_time)
+            if close_time >= cutoff and trade.pnl is not None:
+                today_pnl += trade.pnl
+        
+        return today_pnl
+    
+
+    def _get_broker_pnl(self, broker, closed_arbs, closed_lims):
+        """
+        Calculate total PnL for a specific broker.
+        Args:
+            broker: Broker name to filter trades
+            closed_arbs: List of closed arbitrage trade pairs
+            closed_lims: List of closed limit trades
+        Returns:
+            float: Total PnL for the broker
+        """
+        total_pnl = 0.0
+        for pair in closed_arbs:
+            if pair[0].broker == broker and pair[0].pnl is not None:
+                total_pnl += pair[0].pnl
+            elif pair[1].broker == broker and pair[1].pnl is not None:
+                total_pnl += pair[1].pnl
+        
+        for trade in closed_lims:
+            if trade.broker == broker and trade.pnl is not None:
+                total_pnl += trade.pnl
+        
+        return total_pnl
+
+
+    def _get_broker_arbs(self, broker, closed_arbs):
+        """
+        Count total arbitrage trades for a specific broker.
+        Args:
+            broker: Broker name to filter trades
+            closed_arbs: List of closed arbitrage trade pairs
+        Returns:
+            int: Number of trades for the broker
+        """
+        count = 0
+        for pair in closed_arbs:
+            if pair[0].broker == broker or pair[1].broker == broker:
+                count += 1
+        return count
+    
+
+    def _get_broker_lims(self, broker, closed_lims):
+        """
+        Count total limit trades for a specific broker.
+        Args:
+            broker: Broker name to filter trades
+            closed_lims: List of closed limit trades
+        Returns:
+            int: Number of trades for the broker
+        """
+        count = 0
+        for trade in closed_lims:
+            if trade.broker == broker:
+                count += 1
+        return count

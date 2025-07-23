@@ -27,7 +27,7 @@ JP225:
 
 US30:
   entry_threshold: 40
-  exit_threshold: -25
+  exit_threshold: -35
   max_divergence: 750
   capital_allocation: 0.19
   min_lot: 0.1

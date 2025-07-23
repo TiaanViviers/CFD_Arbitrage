@@ -22,6 +22,8 @@ FILLING_TYPE_MAP = {
     "xm":        mt5.ORDER_FILLING_IOC,
 }
 
+TYPE_MAP = {'buy': mt5.ORDER_TYPE_BUY, 'sell': mt5.ORDER_TYPE_SELL}
+
 
 class MT5BrokerInterface:
     def __init__(self, name: str, path: str, symbol: str, logger):
@@ -29,14 +31,11 @@ class MT5BrokerInterface:
         self.path = path
         self.symbol = symbol
         self.logger = logger
-        #symbol info
         self.digits = None
         self.contract_size = None
         self.min_lot = None
-        #account info
         self.leverage = None
         self.filling_type = None
-
         self.blocked_until = None
         self._last_price = None
         self._lock = threading.RLock()
@@ -145,9 +144,8 @@ class MT5BrokerInterface:
 
     def get_capital_state(self, side: str = "buy") -> dict:
         """
-        Fast account snapshot used by worker:
-            returns {"balance": float, "max_lot": float}
-        Exactly one mt5.account_info() call – no added latency.
+        Return current account balance and max lot size for given side.
+        Uses cached last price to calculate max lot.
         """
         info = mt5.account_info()
         if not info:
@@ -229,27 +227,20 @@ class MT5BrokerInterface:
         Returns the result object or None.
         """
         with self._lock:
-            type_map = {'buy': mt5.ORDER_TYPE_BUY, 'sell': mt5.ORDER_TYPE_SELL}
-            if side not in type_map:
+            
+            if side not in TYPE_MAP:
                 self.logger.error(
                     f"[{self.name}] Invalid order side: {side} (must be buy/sell)"
                 )
                 return None
 
             try:
-                tick = mt5.symbol_info_tick(self.symbol)
-                if tick is None:
-                    self.logger.error(
-                        f"[{self.name}] No tick for {self.symbol}."
-                    )
-                    return None
-
                 exec_price = price
                 if exec_price is None:
-                    exec_price = self._get_market_price_for_side(side, tick)
+                    exec_price = self._get_market_price_for_side(side)
                     if exec_price is None:
                         self.logger.error(
-                            f"[{self.name}] Invalid tick: bid={tick.bid}, ask={tick.ask}"
+                            f"[{self.name}] Invalid tick: no price for {side}."
                         )
                         return None
 
@@ -348,14 +339,14 @@ class MT5BrokerInterface:
 
 
     ############################# Private Helpers ##############################
-    def _get_market_price_for_side(self, side, tick):
+    def _get_market_price_for_side(self, side):
         """
         Given 'buy' or 'sell' and a tick, return the correct price or None.
         """
-        if side == 'buy' and tick.ask > 0:
-            return tick.ask
-        if side == 'sell' and tick.bid > 0:
-            return tick.bid
+        if side == 'buy' and self._last_price.ask > 0:
+            return self._last_price.ask
+        if side == 'sell' and self._last_price.bid > 0:
+            return self._last_price.bid
         return None
 
 
@@ -365,12 +356,11 @@ class MT5BrokerInterface:
         """
         Compose the dict for order_send().
         """
-        type_map = {'buy': mt5.ORDER_TYPE_BUY, 'sell': mt5.ORDER_TYPE_SELL}
         req = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": self.symbol,
             "volume": lots,
-            "type": type_map[side],
+            "type": TYPE_MAP[side],
             "price": price,
             "deviation": deviation,
             "magic": magic,
@@ -390,27 +380,25 @@ class MT5BrokerInterface:
         """
         if pos.type == mt5.POSITION_TYPE_BUY:
             close_type = mt5.ORDER_TYPE_SELL
-            tick = mt5.symbol_info_tick(self.symbol)
-            if tick is None or tick.bid <= 0:
-                self.logger.error(
-                    f"[{self.name}] No valid bid price to close BUY {pos.ticket}."
-                )
-                return close_type, None
-            return close_type, tick.bid
+            price      = getattr(self, "_last_price", {}).get("bid", 0)
+            if price <= 0:
+                tick  = mt5.symbol_info_tick(self.symbol)
+                price = tick.bid if tick else 0
         elif pos.type == mt5.POSITION_TYPE_SELL:
             close_type = mt5.ORDER_TYPE_BUY
-            tick = mt5.symbol_info_tick(self.symbol)
-            if tick is None or tick.ask <= 0:
-                self.logger.error(
-                    f"[{self.name}] No valid ask price to close SELL {pos.ticket}."
-                )
-                return close_type, None
-            return close_type, tick.ask
+            price      = getattr(self, "_last_price", {}).get("ask", 0)
+            if price <= 0:
+                tick  = mt5.symbol_info_tick(self.symbol)
+                price = tick.ask if tick else 0
         else:
-            self.logger.error(
-                f"[{self.name}] Unknown position type for ticket {pos.ticket}."
-            )
+            self.logger.error(f"[{self.name}] Unknown position type {pos.ticket}")
             return None, None
+
+        if price <= 0:
+            self.logger.error(f"[{self.name}] No valid price to close {pos.ticket}")
+            return close_type, None
+
+        return close_type, price
 
 
     def _build_close_request(
@@ -496,6 +484,7 @@ class MT5BrokerInterface:
     
 
     def _set_symbol_info(self, info):
+        """ Set symbol info attributes based on retrieved data."""
         if info is None:
             self.logger.warning("Symbol info is None, going to default settings.")
             self.digits        = 2
@@ -534,6 +523,7 @@ class MT5BrokerInterface:
             
 
     def _set_account_info(self, info):
+        """ Set account info attributes based on retrieved data."""
         if info is None:
             self.logger.warning("Account info is None, going to default settings.")
             self.leverage = 100
