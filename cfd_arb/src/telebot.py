@@ -50,19 +50,29 @@ class TeleBot:
 
     ############################# Message Builders #############################
     def daily_report(
-        self, num_closed_arbs: int, num_closed_lims: int, balances: dict[str, float]
+        self, closed_arbs: list, closed_lims: list, balances: dict[str, float]
     ) -> None:
         """Send a daily summary."""
         lines = [
             f"📈 Daily Report for {self.symbol}",
             "----------------",
-            f"Time: {self._now_str()}",
-            f"Num of closed arb events: {num_closed_arbs}",
-            f"Num of closed lim trades: {num_closed_lims}",
-            "Balances:",
+            f"Total ARB Trades: {len(closed_arbs)}",
+            f"#ARB Trades Today: {self._get_today_arbs(closed_arbs)}\n",
+            f"Total LIM Trades: {len(closed_lims)}",
+            f"#LIM Trades Today: {self._get_today_lims(closed_lims)}\n",
+            f"Total PnL: ${self._get_total_pnl(closed_arbs, closed_lims):.2f}",
+            f"Today's PnL: ${self._get_today_pnl(closed_arbs, closed_lims):.2f}"
+            "----------------",
         ]
         for broker, bal in balances.items():
-            lines.append(f"- {broker}: ${bal:,.2f}")
+            lines.append(
+                f"{broker}:",
+                f"Balance ${bal:.2f}",
+                f"PnL: ${self._get_broker_pnl(broker, closed_arbs, closed_lims)}",
+                f"Total ARB Trades: {self._get_broker_arbs(broker, closed_arbs)}",
+                f"Total LIM Trades: {self._get_broker_lims(broker, closed_lims)}",
+                f"----------------",
+            )
         self._send_message("\n".join(lines))
 
     def open_success(self, sell_tr: Trade, buy_tr: Trade) -> None:
@@ -119,3 +129,9 @@ class TeleBot:
             f"PnL +/-: {lim_tr.pnl:.2f}",
         ]
         self._send_message("\n".join(lines))
+
+
+    ############################# Update Helpers ###############################
+
+
+

@@ -4,7 +4,7 @@ BTCUSD:
   max_divergence: 1200
   capital_allocation: 0.19
   min_lot: 0.01
-  allowed_slip: 5
+  allowed_slip: 30
   lim_sl_pct: 0.0012
 
 GER40:
@@ -31,7 +31,7 @@ US30:
   max_divergence: 750
   capital_allocation: 0.19
   min_lot: 0.1
-  allowed_slip: 5
+  allowed_slip: 7.5
   lim_sl_pct: 0.0012
 
 US100:

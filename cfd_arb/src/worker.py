@@ -108,7 +108,7 @@ def _handle_close_trade(broker, trade, resp_queue, logger) -> None:
             deviation=_get_deviation(broker.digits, trade.allowed_slip),
             magic=trade.arb_id
         )
-        trade = _update_trade_after_close(result, trade, logger)
+        trade = _update_trade_after_close(result, broker, trade, logger)
 
     except Exception as e:
         trade.status = "pending_close"
@@ -149,7 +149,7 @@ def _update_trade_after_open(broker, trade) -> Trade:
     return trade
 
 
-def _update_trade_after_close(result, trade, logger) -> None:
+def _update_trade_after_close(result, broker, trade, logger) -> None:
     """
     Update trade fields after attempting to close.
     """
@@ -158,11 +158,16 @@ def _update_trade_after_close(result, trade, logger) -> None:
         trade.close_time = datetime.now(UTC).isoformat()
         trade.status = "closed"
         trade.error = None
-        if trade.exit_price is not None and trade.entry_price is not None:
-            if trade.side == "buy":
-                trade.pnl = (trade.exit_price - trade.entry_price) * trade.lot_size
-            else:
-                trade.pnl = (trade.entry_price - trade.exit_price) * trade.lot_size
+        broker_pnl = broker.get_trade_profit(getattr(result, "deal", 0))
+        if broker_pnl is not None:
+            trade.pnl = broker_pnl
+        else:
+            mult = broker.contract_size or 1.0
+            if trade.exit_price and trade.entry_price:
+                if trade.side == "buy":
+                    trade.pnl = (trade.exit_price - trade.entry_price) * trade.lot_size * mult
+                else:
+                    trade.pnl = (trade.entry_price - trade.exit_price) * trade.lot_size * mult
         logger.info(f"Successfully closed {trade.side} on {trade.broker} for ${trade.pnl}")
     else:
         trade.status = "pending_close"

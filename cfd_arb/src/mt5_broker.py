@@ -160,29 +160,21 @@ class MT5BrokerInterface:
         }
 
 
-    def get_balance(self, retries: int = 2, retry_delay: float = 0.05):
+    def get_trade_profit(self, deal_ticket: int) -> float:
         """
-        Return account balance, retrying if needed.
+        Return broker-reported profit (USD) for a specific deal ticket.
+        If the deal is not found, returns None.
         """
-        with self._lock:
-            for attempt in range(retries + 1):
-                try:
-                    account_info = mt5.account_info()
-                    if account_info is not None:
-                        return account_info.balance
-                    elif attempt < retries:
-                        time.sleep(retry_delay)
-                except Exception as e:
-                    self.logger.error(
-                        f"[{self.name}] Exception getting balance: {e}"
-                    )
-                    if attempt < retries:
-                        time.sleep(retry_delay)
-            self.logger.error(
-                f"[{self.name}] Could not get balance after {retries+1} attempts."
-            )
+        if deal_ticket <= 0:
             return None
-    
+        try:
+            deals = mt5.history_deals_get(ticket=deal_ticket)
+            if deals and len(deals) > 0 and hasattr(deals[0], "profit"):
+                return deals[0].profit
+        except Exception as e:
+            self.logger.error(f"[{self.name}] history_deal_get failed: {e}")
+            return None
+
 
     def get_positions(self):
         """

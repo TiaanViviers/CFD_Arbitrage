@@ -488,6 +488,7 @@ def _clean_rogue_trades(open_trades: list, open_lim_trades: list,
             _close_leg(stub, worker_cmd_queues, worker_resp_queues)
 
 
+############################ Broker Synchronization ############################
 def _daily_update(closed_arb_trades: list, closed_lim_trades: list,
                    balances: dict, telebot: TeleBot) -> None:
     """
@@ -495,7 +496,27 @@ def _daily_update(closed_arb_trades: list, closed_lim_trades: list,
     """
     now = datetime.now(UTC)
     if now.hour == 21 and now.minute == 3 and balances is not None:
-        telebot.daily_report(
-            len(closed_arb_trades), len(closed_lim_trades), balances
-        )
+        telebot.daily_report(closed_arb_trades, closed_lim_trades, balances)
         time.sleep(60)
+
+
+""""
+Daily update for {ASSET}
+--------------
+Total ARB trades: {total number of closed arb trades}
+Number of ARB trades today: {total number of closed arb trades today}
+
+Total LIM trades: {number of closed lim trades today}
+Number of LIM trades today: {total number of closed lim trades today}
+
+Total PnL: {pnl of all trades taken}
+Daily PnL: {pnl of all trades taken today}
+--------------
+[For each Broker:]
+{Broker name}:
+Balance: {broker balance}
+PnL: {pnl of each trade taken on this broker}
+Total ARB trades: {Number of arb trades taken at this broker}
+Total LIM trades: {Number of Lim trades taken on this broker}
+"\n"
+"""
