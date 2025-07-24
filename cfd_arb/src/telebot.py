@@ -65,14 +65,14 @@ class TeleBot:
             "----------------",
         ]
         for broker, bal in balances.items():
-            lines.extend(
+            lines.extend([
                 f"{broker}:",
                 f"Balance ${bal:.2f}",
                 f"PnL: ${self._get_broker_pnl(broker, closed_arbs, closed_lims)}",
                 f"Total ARB Trades: {self._get_broker_arbs(broker, closed_arbs)}",
                 f"Total LIM Trades: {self._get_broker_lims(broker, closed_lims)}",
                 f"----------------",
-            )
+            ])
         self._send_message("\n".join(lines))
 
     def open_success(self, sell_tr: Trade, buy_tr: Trade) -> None:

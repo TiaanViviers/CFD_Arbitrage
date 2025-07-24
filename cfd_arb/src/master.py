@@ -488,7 +488,7 @@ def _clean_rogue_trades(open_trades: list, open_lim_trades: list,
             _close_leg(stub, worker_cmd_queues, worker_resp_queues)
 
 
-############################ Broker Synchronization ############################
+############################ Daily Update ############################
 def _daily_update(closed_arb_trades: list, closed_lim_trades: list,
                    balances: dict, telebot: TeleBot) -> None:
     """
