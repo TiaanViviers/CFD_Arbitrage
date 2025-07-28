@@ -97,7 +97,7 @@ class MT5BrokerInterface:
         """
         with self._lock:
             try:
-                if not self.order_check_ping() or self._is_in_timeout():
+                if self._is_in_timeout():
                     return None
                 tick = mt5.symbol_info_tick(self.symbol)
                 if tick is None or tick.bid <= 0 or tick.ask <= 0:
@@ -118,28 +118,6 @@ class MT5BrokerInterface:
                     f"[{self.name}] Error fetching tick: {e}"
                 )
                 return None
-
-
-    def order_check_ping(self) -> bool:
-        """
-        Simulate a tiny buy order to test if the market is open.
-        """
-        with self._lock:
-            info = mt5.symbol_info(self.symbol)
-            if info is None or info.ask <= 0:
-                return False
-            req = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": self.symbol,
-                "volume": 0.1,
-                "type": mt5.ORDER_TYPE_BUY,
-                "price": info.ask,
-                "deviation": 300,
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": self.filling_type,
-            }
-            res = mt5.order_check(req)
-            return res is not None and res.retcode == 0
 
 
     def get_capital_state(self, side: str = "buy") -> dict:

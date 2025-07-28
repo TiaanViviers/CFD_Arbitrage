@@ -46,10 +46,10 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
     try:
         while True:
             # ---------- Market open check ----------
-            if not is_trading_time(asset):
+            """if not is_trading_time(asset):
                 _daily_update(closed_trades, closed_lim_trades, balances_df, telebot)
                 time.sleep(10)
-                continue
+                continue"""
 
             # ---------- Data collection ----------
             _request_worker_ticks(worker_cmd_queues)
