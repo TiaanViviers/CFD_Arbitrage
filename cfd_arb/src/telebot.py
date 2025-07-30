@@ -209,8 +209,7 @@ class TeleBot:
         """
         now = datetime.now(UTC)
         cutoff = now.replace(hour=21, minute=0, second=0, microsecond=0)
-        if now.hour < 21:
-            cutoff = cutoff - timedelta(days=1)
+        cutoff = cutoff - timedelta(days=1)
         
         today_pnl = 0.0
         for pair in closed_arbs:
