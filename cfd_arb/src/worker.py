@@ -25,6 +25,8 @@ def worker_proc(broker_conf, cmd_queue, resp_queue):
             _get_tick(broker, resp_queue)
         elif action == "open_trade":
             _handle_open_trade(broker, cmd["trade"], resp_queue)
+        elif action == "pnl_update":
+            _handle_pnl_batch(broker, cmd["arb_ids"], resp_queue, logger)
         elif action == "close_trade":
             _handle_close_trade(broker, cmd["trade"], resp_queue, logger)
         elif action == "get_open_positions":
@@ -90,6 +92,21 @@ def _handle_open_trade(broker, trade, resp_queue) -> None:
         trade.close_time = datetime.now(UTC).isoformat()
         trade.error = str(e)
     resp_queue.put(trade)
+
+
+def _handle_pnl_batch(broker, arb_ids, resp_queue, logger) -> None:
+    pnl_dict = {}
+
+    positions = broker.get_open_positions()
+    if positions is not None:
+        for pos in positions:
+            if pos.magic in arb_ids:
+                pnl_dict[pos.magic] = pos.profit
+
+    resp_queue.put({
+        "type": "pnl_update",
+        "pnl": pnl_dict
+    })
 
 
 def _handle_close_trade(broker, trade, resp_queue, logger) -> None:

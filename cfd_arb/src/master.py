@@ -37,6 +37,7 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
     - Syncs state with broker positions, cleans rogue trades
     """
     open_trades: list = []
+    protected_trades: list = []
     closed_trades: list = []
     open_lim_trades: list = []
     closed_lim_trades: list = []
@@ -64,6 +65,12 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
                 open_lim_trades, closed_lim_trades, closed_trades, asset_config,
                 balances_df, price_matrix, worker_cmd_queues, worker_resp_queues, telebot
             )
+
+            # ---------- Trade updating ----------
+            _request_pnl_update(worker_cmd_queues, open_trades, protected_trades)
+            pnl_dict = _get_pnl_update(worker_resp_queues)
+            open_trades, protected_trades = update_trades(
+                open_trades, protected_trades, pnl_dict)
 
             # ---------- Trade closing ----------
             closed_trades, open_trades = _close_available_trades(
@@ -130,6 +137,44 @@ def _get_worker_ticks(worker_resp_queues: dict) -> tuple[pd.DataFrame, pd.Series
     balances_df = pd.Series(balances, name="balance").sort_index()
     maxlot_series = pd.Series(max_lots,  name="max_lot").sort_index()
     return price_matrix, balances_df, maxlot_series
+
+
+def _request_pnl_update(worker_cmd_queues: dict, open_trades: list,
+                         protected_trades: list) -> None:
+    """
+    Request PnL updates in batches for all open trades from workers.
+    """
+    broker_to_arb_ids = {}
+
+    for trade_pair in open_trades + protected_trades:
+        for trade in trade_pair:
+            broker = trade.broker
+            arb_id = trade.arb_id
+            if broker not in broker_to_arb_ids:
+                broker_to_arb_ids[broker] = set()
+            broker_to_arb_ids[broker].add(arb_id)
+
+    for broker, arb_ids in broker_to_arb_ids.items():
+        worker_cmd_queues[broker].put({
+            "action": "pnl_update",
+            "arb_ids": list(arb_ids)
+        })
+
+
+def _get_pnl_update(worker_resp_queues: dict) -> dict:
+    """
+    Collect PnL updates from all workers.
+    Returns a dict mapping arb_id to pnl value.
+    """
+    pnl_dict = {}
+    for broker, resp_q in worker_resp_queues.items():
+        try:
+            resp = resp_q.get()
+            if resp["type"] == "pnl_update":
+                pnl_dict.update(resp["pnl_dict"])
+        except Exception as e:
+            logger.error(f"[master] Failed to get PnL from {broker}: {e}")
+    return pnl_dict
 
 
 def _build_price_matrix(ticks: dict) -> pd.DataFrame:
@@ -319,6 +364,33 @@ def _place_trade_pair(sell_trade: Trade, buy_trade: Trade,
             sell_trade_resp.status = "closed"
 
     return (sell_trade_resp, buy_trade_resp)
+
+
+################################ Trade Closing #################################
+def update_trades(open_trades: list, protected_trades: list, 
+                  pnl_dict: dict)-> tuple[list, list]:
+    """
+    Update open and protected trades with PnL from pnl_dict.
+    """
+
+    if len(open_trades) > 0:
+        for idx, (sell_trade, buy_trade) in enumerate(open_trades):
+            if sell_trade.arb_id in pnl_dict:
+                sell_trade.pnl = pnl_dict[sell_trade.arb_id]
+            if buy_trade.arb_id in pnl_dict:
+                buy_trade.pnl = pnl_dict[buy_trade.arb_id]
+            open_trades[idx] = (sell_trade, buy_trade)
+    
+    if len(protected_trades) > 0:
+        for idx, (sell_trade, buy_trade) in enumerate(protected_trades):
+            if sell_trade.arb_id in pnl_dict:
+                sell_trade.pnl = pnl_dict[sell_trade.arb_id]
+            if buy_trade.arb_id in pnl_dict:
+                buy_trade.pnl = pnl_dict[buy_trade.arb_id]
+            protected_trades[idx] = (sell_trade, buy_trade)
+    
+    return open_trades, protected_trades
+
 
 
 ################################ Trade Closing #################################
