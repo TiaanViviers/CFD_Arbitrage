@@ -87,6 +87,7 @@ def _handle_open_trade(broker, trade, resp_queue) -> None:
     except Exception as e:
         trade.ticket = None
         trade.status = "closed"
+        trade.close_time = datetime.now(UTC).isoformat()
         trade.error = str(e)
     resp_queue.put(trade)
 
@@ -98,6 +99,7 @@ def _handle_close_trade(broker, trade, resp_queue, logger) -> None:
     # If already closed, just return
     if trade.exit_price is not None or trade.close_time is not None:
         trade.status = "closed"
+        trade.close_time = datetime.now(UTC).isoformat()
         resp_queue.put(trade)
         return
 
@@ -144,6 +146,7 @@ def _update_trade_after_open(broker, trade) -> Trade:
     else:
         trade.ticket = None
         trade.status = "closed"
+        trade.close_time = datetime.now(UTC).isoformat()
         trade.error = "No position found after order!"
         broker.set_timeout()
     return trade

@@ -449,15 +449,19 @@ def _sync_arb_trades(closed_trades: list, open_trades: list,
         buy_open = buy_tr.arb_id in open_ids.get(buy_tr.broker, set())
         if not sell_open and buy_open:
             sell_tr.status = "closed"
+            sell_tr.close_time = datetime.now(UTC).isoformat()
             buy_tr.status = "pending_close"
             new_open.append((sell_tr, buy_tr))
         elif sell_open and not buy_open:
             buy_tr.status = "closed"
+            buy_tr.close_time = datetime.now(UTC).isoformat()
             sell_tr.status = "pending_close"
             new_open.append((sell_tr, buy_tr))
         elif not sell_open and not buy_open:
             sell_tr.status = "closed"
             buy_tr.status = "closed"
+            sell_tr.close_time = datetime.now(UTC).isoformat()
+            buy_tr.close_time = datetime.now(UTC).isoformat()
             new_closed.append((sell_tr, buy_tr))
         else:
             new_open.append((sell_tr, buy_tr))
