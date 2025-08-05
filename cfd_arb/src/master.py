@@ -37,7 +37,6 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
     - Syncs state with broker positions, cleans rogue trades
     """
     open_trades: list = []
-    protected_trades: list = []
     closed_trades: list = []
     open_lim_trades: list = []
     closed_lim_trades: list = []
@@ -67,14 +66,13 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
             )
 
             # ---------- Trade updating ----------
-            _request_pnl_update(worker_cmd_queues, open_trades, protected_trades)
+            _request_pnl_update(worker_cmd_queues, open_trades)
             pnl_dict = _get_pnl_update(worker_resp_queues)
-            open_trades, protected_trades = update_trades(
-                open_trades, protected_trades, pnl_dict)
+            open_trades = update_trades(open_trades, pnl_dict)
 
             # ---------- Trade closing ----------
             closed_trades, open_trades = _close_available_trades(
-                open_trades, closed_trades, price_matrix, asset_config,
+                open_trades, closed_trades, asset_config,
                 worker_cmd_queues, worker_resp_queues
             )
 
@@ -139,14 +137,13 @@ def _get_worker_ticks(worker_resp_queues: dict) -> tuple[pd.DataFrame, pd.Series
     return price_matrix, balances_df, maxlot_series
 
 
-def _request_pnl_update(worker_cmd_queues: dict, open_trades: list,
-                         protected_trades: list) -> None:
+def _request_pnl_update(worker_cmd_queues: dict, open_trades: list) -> None:
     """
     Request PnL updates in batches for all open trades from workers.
     """
     broker_to_arb_ids = {}
 
-    for trade_pair in open_trades + protected_trades:
+    for trade_pair in open_trades:
         for trade in trade_pair:
             broker = trade.broker
             arb_id = trade.arb_id
@@ -298,7 +295,6 @@ def _calculate_lots(broker: str, balances_df: pd.Series, maxlot_series: pd.Serie
     return final_lot
 
 
-
 def _init_trade(broker: str, counter_party: str, side: str, lot: float,
                 price_matrix: pd.DataFrame, slip: float, arb_id: int = None
             ) -> Trade:
@@ -366,13 +362,11 @@ def _place_trade_pair(sell_trade: Trade, buy_trade: Trade,
     return (sell_trade_resp, buy_trade_resp)
 
 
-################################ Trade Closing #################################
-def update_trades(open_trades: list, protected_trades: list, 
-                  pnl_dict: dict)-> tuple[list, list]:
+################################ Trade Updating ################################
+def update_trades(open_trades: list, pnl_dict: dict) -> tuple[list, list]:
     """
     Update open and protected trades with PnL from pnl_dict.
     """
-
     if len(open_trades) > 0:
         for idx, (sell_trade, buy_trade) in enumerate(open_trades):
             if sell_trade.arb_id in pnl_dict:
@@ -381,21 +375,11 @@ def update_trades(open_trades: list, protected_trades: list,
                 buy_trade.pnl = pnl_dict[buy_trade.arb_id]
             open_trades[idx] = (sell_trade, buy_trade)
     
-    if len(protected_trades) > 0:
-        for idx, (sell_trade, buy_trade) in enumerate(protected_trades):
-            if sell_trade.arb_id in pnl_dict:
-                sell_trade.pnl = pnl_dict[sell_trade.arb_id]
-            if buy_trade.arb_id in pnl_dict:
-                buy_trade.pnl = pnl_dict[buy_trade.arb_id]
-            protected_trades[idx] = (sell_trade, buy_trade)
-    
-    return open_trades, protected_trades
-
+    return open_trades
 
 
 ################################ Trade Closing #################################
-def _close_available_trades(open_trades: list, closed_trades: list, 
-                            price_matrix: pd.DataFrame, asset_conf: dict,
+def _close_available_trades(open_trades: list, closed_trades: list, asset_conf: dict,
                             worker_cmd_queues: dict, worker_resp_queues: dict
                         ) -> tuple[list, list]:
     """
@@ -414,16 +398,28 @@ def _close_available_trades(open_trades: list, closed_trades: list,
         if buy_tr.status == "pending_close":
             buy_tr = _close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
 
-        # Main closing condition
+        # Attempt to lock in more profit on protected trades
+        if sell_tr.status == "protected" and buy_tr.status == "protected":
+            sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
+            buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
+
+        # Attempt to lock in profit of open trades
         if (sell_tr.status == "open" and buy_tr.status == "open"
             and _min_trade_time_passed(sell_tr.open_time)
-            and _mean_reverted(sell_tr.broker, buy_tr.broker,
-                                price_matrix, asset_conf["exit_threshold"]
-                            )
+            and _mean_reverted(sell_tr, buy_tr, asset_conf)
             ):
-            sell_tr = _close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
-            buy_tr = _close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
+            sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
+            buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
 
+        # One leg is not protected, try protection with smaller margin
+        if sell_tr.status == "open" and buy_tr.status == "protected":
+           sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues,
+                                   worker_resp_queues, factor=0.25)
+        if sell_tr.status == "protected" and buy_tr.status == "open":
+            buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues,
+                                   worker_resp_queues, factor=0.25)
+        
+        # Move trades that are closed to closed_trades
         if sell_tr.status == "closed" and buy_tr.status == "closed":
             updated_closed.append((sell_tr, buy_tr))
             to_remove.append(idx)
@@ -437,25 +433,16 @@ def _close_available_trades(open_trades: list, closed_trades: list,
     return closed_trades, open_trades
 
 
-def _mean_reverted(sell_broker: str, buy_broker: str,price_matrix: pd.DataFrame,
-                   exit_threshold: float = 0) -> bool:
+def _mean_reverted(sell_trade: Trade, buy_trade: Trade, asset_conf: dict) -> bool:
     """
-    True if divergence (buy_bid - sell_ask) <= exit_threshold (asset-specific).
+    Return True if the trade has mean-reverted enough to justify taking profit.
+    Includes a buffer margin to account for slippage.
     """
-    if (sell_broker not in price_matrix.index or
-        buy_broker not in price_matrix.index):
-        # Can't judge mean reversion if either tick is missing
-        return False
+    current_pnl = sell_trade.pnl + buy_trade.pnl
+    threshold = asset_conf["entry_threshold"]
+    buffer_margin = asset_conf["buffer"] * sell_trade.lot_size
 
-    sell_ask = price_matrix.loc[sell_broker, "ask"]
-    buy_bid  = price_matrix.loc[buy_broker, "bid"]
-
-    # Defensive
-    if pd.isna(sell_ask) or pd.isna(buy_bid):
-        return False
-
-    divergence = buy_bid - sell_ask
-    return divergence <= exit_threshold
+    return current_pnl > (threshold - buffer_margin)
 
 
 def _min_trade_time_passed(open_time: str) -> bool:
@@ -481,6 +468,30 @@ def _close_leg(trade: Trade, worker_cmd_queues: dict,
     broker = trade.broker
     worker_cmd_queues[broker].put({"action": "close_trade", "trade": trade})
     return worker_resp_queues[broker].get()
+
+
+def _protect_leg(trade: Trade, asset_conf: dict,worker_cmd_queues: dict, 
+                 worker_resp_queues: dict, factor: int = 0.5) -> Trade:
+    """
+    Attempt to add a stop loss to a trade that is already in profit.
+    """
+    if trade.side == "sell":
+        trade.new_sl = trade.entry_price - (trade.pnl / trade.lot_size) + \
+                        (asset_conf["buffer"] * factor * trade.lot_size)
+    if trade.side == "buy":
+        trade.new_sl = trade.entry_price + (trade.pnl / trade.lot_size) - \
+                        (asset_conf["buffer"] * factor * trade.lot_size)
+        
+    # No need to update if new SL is worse/only small improvement
+    if trade.status == "protected" and trade.side == "sell":
+        if trade.new_sl > trade.sl - trade.lot_size * asset_conf["buffer"]:
+            return trade  
+    if trade.status == "protected" and trade.side == "buy":
+        if trade.new_sl < trade.sl + trade.lot_size * asset_conf["buffer"]:
+            return trade
+        
+    worker_cmd_queues[trade.broker].put({"action": "sl_update", "trade": trade})
+    return worker_resp_queues[trade.broker].get()
 
 
 ############################ Broker Synchronization ############################
@@ -522,19 +533,24 @@ def _sync_arb_trades(closed_trades: list, open_trades: list,
         if not sell_open and buy_open:
             sell_tr.status = "closed"
             sell_tr.close_time = datetime.now(UTC).isoformat()
-            buy_tr.status = "pending_close"
+            if buy_tr.status == "open":
+                buy_tr.status = "pending_close"
             new_open.append((sell_tr, buy_tr))
+
         elif sell_open and not buy_open:
             buy_tr.status = "closed"
             buy_tr.close_time = datetime.now(UTC).isoformat()
-            sell_tr.status = "pending_close"
+            if sell_tr.status == "open":
+                sell_tr.status = "pending_close"
             new_open.append((sell_tr, buy_tr))
+
         elif not sell_open and not buy_open:
             sell_tr.status = "closed"
             buy_tr.status = "closed"
             sell_tr.close_time = datetime.now(UTC).isoformat()
             buy_tr.close_time = datetime.now(UTC).isoformat()
             new_closed.append((sell_tr, buy_tr))
+            
         else:
             new_open.append((sell_tr, buy_tr))
     return new_closed, new_open

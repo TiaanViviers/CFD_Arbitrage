@@ -1,6 +1,6 @@
 BTCUSD:
   entry_threshold: 180
-  exit_threshold: -65
+  buffer: 70
   max_divergence: 1200
   capital_allocation: 0.24
   min_lot: 0.01
@@ -9,7 +9,7 @@ BTCUSD:
 
 GER40:
   entry_threshold: 22.5
-  exit_threshold: -7.5
+  buffer: 8
   max_divergence: 300
   capital_allocation: 0.0
   min_lot: 0.1
@@ -18,7 +18,7 @@ GER40:
 
 JP225:
   entry_threshold: 30
-  exit_threshold: -25
+  buffer: 30
   max_divergence: 700
   capital_allocation: 0.24
   min_lot: 0.1
@@ -27,7 +27,7 @@ JP225:
 
 US30:
   entry_threshold: 42.5
-  exit_threshold: -50
+  buffer: 50
   max_divergence: 750
   capital_allocation: 0.24
   min_lot: 0.1
@@ -36,7 +36,7 @@ US30:
 
 US100:
   entry_threshold: 30
-  exit_threshold: -32.5
+  buffer: 30
   max_divergence: 500
   capital_allocation: 0.24
   min_lot: 0.1

@@ -29,6 +29,8 @@ def worker_proc(broker_conf, cmd_queue, resp_queue):
             _handle_pnl_batch(broker, cmd["arb_ids"], resp_queue, logger)
         elif action == "close_trade":
             _handle_close_trade(broker, cmd["trade"], resp_queue, logger)
+        elif action == "sl_update":
+            _handle_sl_update(broker, cmd["trade"], resp_queue, logger)
         elif action == "get_open_positions":
             _handle_get_open_positions(broker, resp_queue, logger)
         elif action == "shutdown":
@@ -132,6 +134,26 @@ def _handle_close_trade(broker, trade, resp_queue, logger) -> None:
     except Exception as e:
         trade.status = "pending_close"
         trade.error = str(e)
+    resp_queue.put(trade)
+
+
+def _handle_sl_update(broker, trade, resp_queue, logger) -> None:
+    """
+    Update SL for an existing trade, put updated trade on response queue.
+    """
+    try:
+        if trade.new_sl is None:
+            resp_queue.put(trade)
+
+        if broker.update_stop_loss(trade.ticket, trade.magic, trade.new_sl):
+            trade.status = "protected"
+            trade.sl = trade.new_sl
+            trade.new_sl = None
+
+    except Exception as e:
+        trade.status = "sl_update_error"
+        trade.error = str(e)
+
     resp_queue.put(trade)
 
 

@@ -13,6 +13,7 @@ class Trade:
     entry_price: float
     status: str = "pending"
     sl: Optional[float] = None
+    new_sl: Optional[float] = None
     tp: Optional[float] = None
     ticket: Optional[int] = None
     asset: Optional[str] = None
