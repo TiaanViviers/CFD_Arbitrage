@@ -1,5 +1,5 @@
 BTCUSD:
-  entry_threshold: 180
+  entry_threshold: 10
   buffer: 70
   max_divergence: 1200
   capital_allocation: 0.24
@@ -35,8 +35,8 @@ US30:
   lim_sl_pct: 0.0012
 
 US100:
-  entry_threshold: 30
-  buffer: 30
+  entry_threshold: 10
+  buffer: 10
   max_divergence: 500
   capital_allocation: 0.24
   min_lot: 0.1

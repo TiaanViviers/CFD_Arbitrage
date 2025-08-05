@@ -45,6 +45,7 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
 
     try:
         while True:
+            print("running")
             # ---------- Market open check ----------
             if not is_trading_time(asset):
                 _daily_update(closed_trades, closed_lim_trades, balances_df, telebot)
@@ -66,9 +67,12 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
             )
 
             # ---------- Trade updating ----------
-            _request_pnl_update(worker_cmd_queues, open_trades)
-            pnl_dict = _get_pnl_update(worker_resp_queues)
-            open_trades = update_trades(open_trades, pnl_dict)
+            if len(open_trades) > 0:
+                _request_pnl_update(worker_cmd_queues, open_trades)
+                pnl_dict = _get_pnl_update(worker_resp_queues)
+                open_trades = update_trades(open_trades, pnl_dict)
+            
+            print("update complete")
 
             # ---------- Trade closing ----------
             closed_trades, open_trades = _close_available_trades(
@@ -76,13 +80,16 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
                 worker_cmd_queues, worker_resp_queues
             )
 
+            print("close complete")
             # ---------- Sync and cleaning ----------
             broker_positions = _request_broker_positions(
                 worker_cmd_queues, worker_resp_queues
             )
             closed_trades, open_trades = _sync_arb_trades(
-                closed_trades, open_trades, broker_positions
+                closed_trades, open_trades, broker_positions, worker_cmd_queues,
+                worker_resp_queues
             )
+            print("sync complete")
             closed_lim_trades, open_lim_trades = sync_lim_trades(
                 closed_lim_trades, open_lim_trades, broker_positions,
                 price_matrix, telebot
@@ -167,10 +174,10 @@ def _get_pnl_update(worker_resp_queues: dict) -> dict:
     for broker, resp_q in worker_resp_queues.items():
         try:
             resp = resp_q.get()
-            if resp["type"] == "pnl_update":
-                pnl_dict.update(resp["pnl_dict"])
+            pnl_dict.update(resp.get("pnl", {}))
         except Exception as e:
             logger.error(f"[master] Failed to get PnL from {broker}: {e}")
+    print("returning pnl_dict")
     return pnl_dict
 
 
@@ -367,13 +374,12 @@ def update_trades(open_trades: list, pnl_dict: dict) -> tuple[list, list]:
     """
     Update open and protected trades with PnL from pnl_dict.
     """
-    if len(open_trades) > 0:
-        for idx, (sell_trade, buy_trade) in enumerate(open_trades):
-            if sell_trade.arb_id in pnl_dict:
-                sell_trade.pnl = pnl_dict[sell_trade.arb_id]
-            if buy_trade.arb_id in pnl_dict:
-                buy_trade.pnl = pnl_dict[buy_trade.arb_id]
-            open_trades[idx] = (sell_trade, buy_trade)
+    for idx, (sell_trade, buy_trade) in enumerate(open_trades):
+        if sell_trade.arb_id in pnl_dict:
+            sell_trade.pnl = pnl_dict[sell_trade.arb_id]
+        if buy_trade.arb_id in pnl_dict:
+            buy_trade.pnl = pnl_dict[buy_trade.arb_id]
+        open_trades[idx] = (sell_trade, buy_trade)
     
     return open_trades
 
@@ -421,6 +427,8 @@ def _close_available_trades(open_trades: list, closed_trades: list, asset_conf: 
         
         # Move trades that are closed to closed_trades
         if sell_tr.status == "closed" and buy_tr.status == "closed":
+            sell_tr, buy_tr = _finalize_pnl(sell_tr, buy_tr, worker_cmd_queues,
+                                            worker_resp_queues)
             updated_closed.append((sell_tr, buy_tr))
             to_remove.append(idx)
             telebot.close_trade(sell_tr, buy_tr)
@@ -470,7 +478,7 @@ def _close_leg(trade: Trade, worker_cmd_queues: dict,
     return worker_resp_queues[broker].get()
 
 
-def _protect_leg(trade: Trade, asset_conf: dict,worker_cmd_queues: dict, 
+def _protect_leg(trade: Trade, asset_conf: dict, worker_cmd_queues: dict, 
                  worker_resp_queues: dict, factor: int = 0.5) -> Trade:
     """
     Attempt to add a stop loss to a trade that is already in profit.
@@ -494,6 +502,18 @@ def _protect_leg(trade: Trade, asset_conf: dict,worker_cmd_queues: dict,
     return worker_resp_queues[trade.broker].get()
 
 
+def _finalize_pnl(sell_trade: Trade, buy_trade: Trade, worker_cmd_queues: dict, 
+                 worker_resp_queues: dict) -> tuple[Trade, Trade]:
+    """
+    Finalize PnL for both legs of the trade, set close times.
+    """
+    worker_cmd_queues[sell_trade.broker].put({"action": "final_pnl", "trade": sell_trade})
+    worker_cmd_queues[buy_trade.broker].put({"action": "final", "trade": buy_trade})
+    sell_trade_resp = worker_resp_queues[sell_trade.broker].get()
+    buy_trade_resp = worker_resp_queues[buy_trade.broker].get()
+    return sell_trade_resp, buy_trade_resp
+    
+
 ############################ Broker Synchronization ############################
 def _request_broker_positions(
         worker_cmd_queues: dict, worker_resp_queues: dict) -> dict:
@@ -515,7 +535,8 @@ def _request_broker_positions(
 
 
 def _sync_arb_trades(closed_trades: list, open_trades: list,
-                     broker_positions: dict) -> tuple[list, list]:
+                     broker_positions: dict, worker_cmd_queues: dict, 
+                     worker_resp_queues: dict) -> tuple[list, list]:
     """
     Reconcile open_trades with broker_positions. Update statuses accordingly.
     Returns (new_closed_trades, new_open_trades).
@@ -547,9 +568,12 @@ def _sync_arb_trades(closed_trades: list, open_trades: list,
         elif not sell_open and not buy_open:
             sell_tr.status = "closed"
             buy_tr.status = "closed"
+            sell_tr, buy_tr = _finalize_pnl(sell_tr, buy_tr, worker_cmd_queues,
+                                             worker_resp_queues)
             sell_tr.close_time = datetime.now(UTC).isoformat()
             buy_tr.close_time = datetime.now(UTC).isoformat()
             new_closed.append((sell_tr, buy_tr))
+            telebot.close_trade(sell_tr, buy_tr)
             
         else:
             new_open.append((sell_tr, buy_tr))

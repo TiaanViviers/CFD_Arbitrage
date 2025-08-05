@@ -136,20 +136,43 @@ class MT5BrokerInterface:
         }
 
 
-    def get_trade_profit(self, deal_ticket: int) -> float:
+    def get_trade_profit(self, deal_ticket=None, position_ticket=None) -> float:
         """
-        Return broker-reported profit (USD) for a specific deal ticket.
-        If the deal is not found, returns None.
+        If deal_ticket is given, find that deal in recent history and return its profit.
+        If position_ticket is given, pull all history deals for the position,
+        pick the final exit deal, and return its profit.
+        Returns None if nothing is found or on error.
         """
-        if deal_ticket <= 0:
-            return None
         try:
-            deals = mt5.history_deals_get(ticket=deal_ticket)
-            if deals and len(deals) > 0 and hasattr(deals[0], "profit"):
-                return deals[0].profit
+            # --- Manual close via deal_ticket ---
+            if deal_ticket is not None and position_ticket is None:
+                to_dt   = datetime.now(UTC)
+                from_dt = to_dt - timedelta(minutes=60)
+                recent = mt5.history_deals_get(from_dt, to_dt)
+                if not recent:
+                    return None
+
+                # find the exact deal by its ticket
+                deal = next((d for d in recent if d.ticket == deal_ticket), None)
+                return deal.profit if deal else None
+
+            # --- Stop-loss via position_ticket ---
+            elif position_ticket is not None and deal_ticket is None:
+                deals = mt5.history_deals_get(position=position_ticket)
+                if not deals:
+                    return None
+                
+                exits = [d for d in deals if d.entry == mt5.DEAL_ENTRY_OUT]
+                if not exits:
+                    return None
+
+                # pick the last one by timestamp and return its profit
+                last = max(exits, key=lambda d: d.time)
+                return last.profit
+
         except Exception as e:
-            self.logger.error(f"[{self.name}] history_deal_get failed: {e}")
-            return None
+            self.logger.error(f"[{self.name}] get_trade_profit failed: {e}")
+        return None
 
 
     def get_positions(self):
@@ -161,25 +184,17 @@ class MT5BrokerInterface:
 
     def get_open_positions(self):
         """
-        Return list of open positions (dicts) for this symbol.
+        Return list of open MT5 position objects for this symbol.
         """
         with self._lock:
             try:
-                positions = mt5.positions_get(symbol=self.symbol)
-                if positions is None:
+                mpos = mt5.positions_get(symbol=self.symbol)
+                if not mpos:
                     self.logger.warning(
                         f"[{self.name}] Could not fetch open positions for {self.symbol}."
                     )
                     return []
-                return [
-                    {
-                        "ticket": pos.ticket,
-                        "magic": pos.magic,
-                        "side": "buy" if pos.type == mt5.ORDER_TYPE_BUY else "sell",
-                        "volume": pos.volume,
-                    }
-                    for pos in positions
-                ]
+                return list(mpos)  # these have .ticket, .magic, .profit, .volume, etc.
             except Exception as e:
                 self.logger.error(
                     f"[{self.name}] Exception in get_open_positions: {e}"
