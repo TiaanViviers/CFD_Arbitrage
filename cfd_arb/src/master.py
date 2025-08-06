@@ -5,6 +5,7 @@ Orchestrates tick data collection, trade entry/exit, state sync, and cleaning.
 Groups functions by phase for clarity and maintainability.
 """
 from datetime import datetime, UTC
+from queue import Empty
 import time
 import pandas as pd
 import numpy as np
@@ -45,7 +46,6 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
 
     try:
         while True:
-            print("running")
             # ---------- Market open check ----------
             if not is_trading_time(asset):
                 _daily_update(closed_trades, closed_lim_trades, balances_df, telebot)
@@ -68,19 +68,16 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
 
             # ---------- Trade updating ----------
             if len(open_trades) > 0:
-                _request_pnl_update(worker_cmd_queues, open_trades)
-                pnl_dict = _get_pnl_update(worker_resp_queues)
+                requested = _request_pnl_update(worker_cmd_queues, open_trades)
+                pnl_dict = _get_pnl_update(worker_resp_queues, requested)
                 open_trades = update_trades(open_trades, pnl_dict)
             
-            print("update complete")
-
             # ---------- Trade closing ----------
             closed_trades, open_trades = _close_available_trades(
                 open_trades, closed_trades, asset_config,
                 worker_cmd_queues, worker_resp_queues
             )
 
-            print("close complete")
             # ---------- Sync and cleaning ----------
             broker_positions = _request_broker_positions(
                 worker_cmd_queues, worker_resp_queues
@@ -89,7 +86,6 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
                 closed_trades, open_trades, broker_positions, worker_cmd_queues,
                 worker_resp_queues
             )
-            print("sync complete")
             closed_lim_trades, open_lim_trades = sync_lim_trades(
                 closed_lim_trades, open_lim_trades, broker_positions,
                 price_matrix, telebot
@@ -144,19 +140,16 @@ def _get_worker_ticks(worker_resp_queues: dict) -> tuple[pd.DataFrame, pd.Series
     return price_matrix, balances_df, maxlot_series
 
 
-def _request_pnl_update(worker_cmd_queues: dict, open_trades: list) -> None:
+def _request_pnl_update(worker_cmd_queues: dict, open_trades: list) -> set:
     """
     Request PnL updates in batches for all open trades from workers.
+    Returns the set of brokers we actually messaged.
     """
     broker_to_arb_ids = {}
 
     for trade_pair in open_trades:
         for trade in trade_pair:
-            broker = trade.broker
-            arb_id = trade.arb_id
-            if broker not in broker_to_arb_ids:
-                broker_to_arb_ids[broker] = set()
-            broker_to_arb_ids[broker].add(arb_id)
+            broker_to_arb_ids.setdefault(trade.broker, set()).add(trade.arb_id)
 
     for broker, arb_ids in broker_to_arb_ids.items():
         worker_cmd_queues[broker].put({
@@ -164,20 +157,25 @@ def _request_pnl_update(worker_cmd_queues: dict, open_trades: list) -> None:
             "arb_ids": list(arb_ids)
         })
 
+    return set(broker_to_arb_ids)
 
-def _get_pnl_update(worker_resp_queues: dict) -> dict:
+
+def _get_pnl_update(worker_resp_queues: dict,
+                    requested_brokers: set) -> dict:
     """
-    Collect PnL updates from all workers.
-    Returns a dict mapping arb_id to pnl value.
+    Collect PnL updates only from brokers we asked.
     """
+    
     pnl_dict = {}
-    for broker, resp_q in worker_resp_queues.items():
+    for broker in requested_brokers:
+        resp_q = worker_resp_queues[broker]
         try:
-            resp = resp_q.get()
+            resp = resp_q.get(timeout=1)
             pnl_dict.update(resp.get("pnl", {}))
+        except Empty:
+            logger.warning(f"[master] no PnL response from {broker}")
         except Exception as e:
-            logger.error(f"[master] Failed to get PnL from {broker}: {e}")
-    print("returning pnl_dict")
+            logger.error(f"[master] error reading PnL from {broker}: {e}")
     return pnl_dict
 
 
@@ -448,9 +446,9 @@ def _mean_reverted(sell_trade: Trade, buy_trade: Trade, asset_conf: dict) -> boo
     """
     current_pnl = sell_trade.pnl + buy_trade.pnl
     threshold = asset_conf["entry_threshold"]
-    buffer_margin = asset_conf["buffer"] * sell_trade.lot_size
+    buffer_margin = asset_conf["buffer"] * sell_trade.lot_size + asset_conf["allowed_slip"]
 
-    return current_pnl > (threshold - buffer_margin)
+    return current_pnl > abs(threshold - buffer_margin)
 
 
 def _min_trade_time_passed(open_time: str) -> bool:
@@ -492,10 +490,12 @@ def _protect_leg(trade: Trade, asset_conf: dict, worker_cmd_queues: dict,
         
     # No need to update if new SL is worse/only small improvement
     if trade.status == "protected" and trade.side == "sell":
-        if trade.new_sl > trade.sl - trade.lot_size * asset_conf["buffer"]:
+        if trade.new_sl > trade.sl - (trade.lot_size * asset_conf["buffer"]) - \
+        asset_conf["allowed_slip"]:
             return trade  
     if trade.status == "protected" and trade.side == "buy":
-        if trade.new_sl < trade.sl + trade.lot_size * asset_conf["buffer"]:
+        if trade.new_sl < trade.sl + (trade.lot_size * asset_conf["buffer"]) + \
+        asset_conf["allowed_slip"]:
             return trade
         
     worker_cmd_queues[trade.broker].put({"action": "sl_update", "trade": trade})

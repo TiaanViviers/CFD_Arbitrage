@@ -179,7 +179,15 @@ class MT5BrokerInterface:
         """
         Return all positions for this symbol (raw MT5 objects).
         """
-        return mt5.positions_get(symbol=self.symbol)
+        with self._lock:
+            try:
+                positions = mt5.positions_get(symbol=self.symbol)
+            except Exception as e:
+                self.logger.error(
+                    f"[{self.name}] Exception in get_positions: {e}"
+                )
+                return []
+        return positions if positions else []
     
 
     def get_open_positions(self):
@@ -190,15 +198,19 @@ class MT5BrokerInterface:
             try:
                 mpos = mt5.positions_get(symbol=self.symbol)
                 if not mpos:
-                    self.logger.warning(
-                        f"[{self.name}] Could not fetch open positions for {self.symbol}."
-                    )
                     return []
-                return list(mpos)  # these have .ticket, .magic, .profit, .volume, etc.
+                return [
+                    {
+                        "ticket": pos.ticket,
+                        "magic":  pos.magic,
+                        "side":   "buy" if pos.type == mt5.ORDER_TYPE_BUY else "sell",
+                        "volume": pos.volume,
+                        "profit": pos.profit,
+                    }
+                    for pos in mpos
+                ]
             except Exception as e:
-                self.logger.error(
-                    f"[{self.name}] Exception in get_open_positions: {e}"
-                )
+                self.logger.error(f"[{self.name}] Exception in get_open_positions: {e}")
                 return []
             
     

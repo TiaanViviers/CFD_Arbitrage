@@ -100,14 +100,12 @@ def _handle_open_trade(broker, trade, resp_queue) -> None:
 
 def _handle_pnl_batch(broker, arb_ids, resp_queue, logger) -> None:
     pnl_dict = {}
-
     positions = broker.get_open_positions()
     if positions is not None:
         for pos in positions:
-            if pos.magic in arb_ids:
-                pnl_dict[pos.magic] = pos.profit
-    
-    logger.info(f"[{broker.name}] PnL update: {pnl_dict}")
+            magic = pos["magic"]
+            if magic in arb_ids:
+                pnl_dict[magic] = pos["profit"]
 
     resp_queue.put({
         "type": "pnl_update",
@@ -164,7 +162,7 @@ def _handle_sl_update(broker, trade, resp_queue, logger) -> None:
         if trade.new_sl is None:
             resp_queue.put(trade)
 
-        if broker.update_stop_loss(trade.ticket, trade.magic, trade.new_sl):
+        if broker.update_sl(trade.ticket, trade.arb_id, trade.new_sl):
             trade.status = "protected"
             trade.sl = trade.new_sl
             trade.new_sl = None

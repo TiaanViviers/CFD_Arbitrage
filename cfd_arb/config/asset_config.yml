@@ -1,10 +1,10 @@
 BTCUSD:
-  entry_threshold: 10
+  entry_threshold: 180
   buffer: 70
   max_divergence: 1200
   capital_allocation: 0.24
   min_lot: 0.01
-  allowed_slip: 30
+  allowed_slip: 10
   lim_sl_pct: 0.0012
 
 GER40:
@@ -31,12 +31,12 @@ US30:
   max_divergence: 750
   capital_allocation: 0.24
   min_lot: 0.1
-  allowed_slip: 7.5
+  allowed_slip: 5
   lim_sl_pct: 0.0012
 
 US100:
   entry_threshold: 10
-  buffer: 10
+  buffer: 50
   max_divergence: 500
   capital_allocation: 0.24
   min_lot: 0.1
