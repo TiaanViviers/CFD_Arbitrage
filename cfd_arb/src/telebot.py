@@ -81,7 +81,6 @@ class TeleBot:
             f"🟢 Trade pair opened successfully on {self.symbol}: "
             f"{sell_tr.broker}<->{buy_tr.broker}",
             "----------------",
-            f"Time: {self._now_str()}",
             f"Divergence: {(sell_tr.entry_price - buy_tr.entry_price):.2f}",
             f"Lot Size: {sell_tr.lot_size}",
         ]
@@ -93,9 +92,23 @@ class TeleBot:
             f"🔴 Trade pair failed on {self.symbol}: "
             f"{sell_tr.broker}<->{buy_tr.broker}",
             "----------------",
-            f"Time: {self._now_str()}",
             f"sell: {sell_tr.status} ({sell_tr.error})",
             f"buy: {buy_tr.status} ({buy_tr.error})",
+        ]
+        self._send_message("\n".join(lines))
+
+    def add_sl(self, sell_tr: Trade, buy_tr: Trade) -> None:
+        """
+        Notify that a sl has been added to the trade pair and that profits
+        have been locked in.
+        """
+        sell_profit = sell_tr.entry_price - sell_tr.sl
+        buy_profit = buy_tr.sl - buy_tr.entry_price
+        lines = [
+            f"🟠 Stop loss added for trade pair on {self.symbol}: "
+            f"{sell_tr.broker}<->{buy_tr.broker}",
+            "----------------",
+            f"Secured profit: {sell_profit + buy_profit}"
         ]
         self._send_message("\n".join(lines))
 
@@ -105,7 +118,6 @@ class TeleBot:
             f"🟣 Closed trade pair on {self.symbol}: "
             f"{sell_tr.broker}<->{buy_tr.broker}",
             "----------------",
-            f"Time: {self._now_str()}",
             f"PnL: {(sell_tr.pnl + buy_tr.pnl):.2f}",
         ]
         self._send_message("\n".join(lines))
@@ -113,9 +125,8 @@ class TeleBot:
     def open_lim(self, lim_tr: Trade, win_rate: float) -> None:
         """Notify LIM trade opened."""
         lines = [
-            f"🟢 Opened LIM trade on {self.symbol}: {lim_tr.broker}",
+            f"🔵 Opened LIM trade on {self.symbol}: {lim_tr.broker}",
             "----------------",
-            f"Time: {self._now_str()}",
             f"Win Rate: {win_rate:.2f}%",
         ]
         self._send_message("\n".join(lines))
@@ -125,7 +136,6 @@ class TeleBot:
         lines = [
             f"🟣 Closed LIM trade on {self.symbol}: {lim_tr.broker}",
             "----------------",
-            f"Time: {self._now_str()}",
             f"PnL +/-: {lim_tr.pnl:.2f}",
         ]
         self._send_message("\n".join(lines))

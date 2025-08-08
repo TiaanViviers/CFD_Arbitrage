@@ -414,14 +414,16 @@ def _close_available_trades(open_trades: list, closed_trades: list, asset_conf: 
             ):
             sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
             buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
+            if sell_tr.status == "protected" and buy_tr.status == "protected":
+                telebot.add_sl(sell_tr, buy_tr)
 
         # One leg is not protected, try protection with smaller margin
         if sell_tr.status == "open" and buy_tr.status == "protected":
            sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues,
-                                   worker_resp_queues, factor=0.25)
+                                   worker_resp_queues, factor=0.15)
         if sell_tr.status == "protected" and buy_tr.status == "open":
             buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues,
-                                   worker_resp_queues, factor=0.25)
+                                   worker_resp_queues, factor=0.15)
         
         # Move trades that are closed to closed_trades
         if sell_tr.status == "closed" and buy_tr.status == "closed":
@@ -445,10 +447,12 @@ def _mean_reverted(sell_trade: Trade, buy_trade: Trade, asset_conf: dict) -> boo
     Includes a buffer margin to account for slippage.
     """
     current_pnl = sell_trade.pnl + buy_trade.pnl
-    threshold = asset_conf["entry_threshold"]
-    buffer_margin = asset_conf["buffer"] * sell_trade.lot_size + asset_conf["allowed_slip"]
+    threshold = asset_conf["entry_threshold"] * sell_trade.lot_size
+    buffer_margin = asset_conf["buffer"] * sell_trade.lot_size
 
-    return current_pnl > abs(threshold - buffer_margin)
+    print(f"Current PnL: {current_pnl}, Threshold + Buffer: {threshold + buffer_margin}")
+
+    return current_pnl > threshold + buffer_margin
 
 
 def _min_trade_time_passed(open_time: str) -> bool:
@@ -477,7 +481,7 @@ def _close_leg(trade: Trade, worker_cmd_queues: dict,
 
 
 def _protect_leg(trade: Trade, asset_conf: dict, worker_cmd_queues: dict, 
-                 worker_resp_queues: dict, factor: int = 0.5) -> Trade:
+                 worker_resp_queues: dict, factor: int = 0.3) -> Trade:
     """
     Attempt to add a stop loss to a trade that is already in profit.
     """
