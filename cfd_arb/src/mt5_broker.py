@@ -147,7 +147,7 @@ class MT5BrokerInterface:
             # --- Manual close via deal_ticket ---
             if deal_ticket is not None and position_ticket is None:
                 to_dt   = datetime.now(UTC)
-                from_dt = to_dt - timedelta(minutes=60)
+                from_dt = to_dt - timedelta(minutes=5)
                 recent = mt5.history_deals_get(from_dt, to_dt)
                 if not recent:
                     return None
@@ -341,32 +341,6 @@ class MT5BrokerInterface:
                     exc_info=True
                 )
                 return None
-
-
-    def update_sl(self, ticket, magic, new_sl):
-        """
-        Update stop loss for an existing position. 
-        """
-        request = {
-                    "action": mt5.TRADE_ACTION_SLTP,
-                    "symbol": self.symbol,
-                    "position": ticket,
-                    "sl": new_sl,
-                    "magic": magic,
-                    "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": self.filling_type
-                }
-        result = mt5.order_send(request)
-        if result is None:
-            self.logger.error(f"[{self.name}] order_send returned None while updating SL")
-            return False
-        
-        if result.retcode != mt5.TRADE_RETCODE_DONE:
-            self.logger.error(f"[{self.name}] Failed to update SL (retcode={result.retcode}): {result.comment}")
-            return False
-        
-        self.logger.info(f"[{self.name}] SL updated to {new_sl} for {self.symbol}")
-        return True
 
 
     ############################# Private Helpers ##############################

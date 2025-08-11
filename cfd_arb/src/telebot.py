@@ -97,21 +97,6 @@ class TeleBot:
         ]
         self._send_message("\n".join(lines))
 
-    def add_sl(self, sell_tr: Trade, buy_tr: Trade) -> None:
-        """
-        Notify that a sl has been added to the trade pair and that profits
-        have been locked in.
-        """
-        sell_profit = sell_tr.entry_price - sell_tr.sl
-        buy_profit = buy_tr.sl - buy_tr.entry_price
-        lines = [
-            f"🟠 Stop loss added for trade pair on {self.symbol}: "
-            f"{sell_tr.broker}<->{buy_tr.broker}",
-            "----------------",
-            f"Secured profit: {sell_profit + buy_profit}"
-        ]
-        self._send_message("\n".join(lines))
-
     def close_trade(self, sell_tr: Trade, buy_tr: Trade) -> None:
         """Notify trade pair closed."""
         lines = [

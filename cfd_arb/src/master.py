@@ -370,7 +370,7 @@ def _place_trade_pair(sell_trade: Trade, buy_trade: Trade,
 ################################ Trade Updating ################################
 def update_trades(open_trades: list, pnl_dict: dict) -> tuple[list, list]:
     """
-    Update open and protected trades with PnL from pnl_dict.
+    Update open trades with PnL from pnl_dict.
     """
     for idx, (sell_trade, buy_trade) in enumerate(open_trades):
         if sell_trade.arb_id in pnl_dict:
@@ -402,33 +402,16 @@ def _close_available_trades(open_trades: list, closed_trades: list, asset_conf: 
         if buy_tr.status == "pending_close":
             buy_tr = _close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
 
-        # Attempt to lock in more profit on protected trades
-        if sell_tr.status == "protected" and buy_tr.status == "protected":
-            sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
-            buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
-
         # Attempt to lock in profit of open trades
         if (sell_tr.status == "open" and buy_tr.status == "open"
             and _min_trade_time_passed(sell_tr.open_time)
             and _mean_reverted(sell_tr, buy_tr, asset_conf)
             ):
-            sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
-            buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues, worker_resp_queues)
-            if sell_tr.status == "protected" and buy_tr.status == "protected":
-                telebot.add_sl(sell_tr, buy_tr)
+            sell_tr = _close_leg(sell_tr, worker_cmd_queues, worker_resp_queues)
+            buy_tr = _close_leg(buy_tr, worker_cmd_queues, worker_resp_queues)
 
-        # One leg is not protected, try protection with smaller margin
-        if sell_tr.status == "open" and buy_tr.status == "protected":
-           sell_tr = _protect_leg(sell_tr, asset_conf, worker_cmd_queues,
-                                   worker_resp_queues, factor=0.15)
-        if sell_tr.status == "protected" and buy_tr.status == "open":
-            buy_tr = _protect_leg(buy_tr, asset_conf, worker_cmd_queues,
-                                   worker_resp_queues, factor=0.15)
-        
         # Move trades that are closed to closed_trades
         if sell_tr.status == "closed" and buy_tr.status == "closed":
-            sell_tr, buy_tr = _finalize_pnl(sell_tr, buy_tr, worker_cmd_queues,
-                                            worker_resp_queues)
             updated_closed.append((sell_tr, buy_tr))
             to_remove.append(idx)
             telebot.close_trade(sell_tr, buy_tr)
@@ -450,7 +433,7 @@ def _mean_reverted(sell_trade: Trade, buy_trade: Trade, asset_conf: dict) -> boo
     threshold = asset_conf["entry_threshold"] * sell_trade.lot_size
     buffer_margin = asset_conf["buffer"] * sell_trade.lot_size
 
-    print(f"Current PnL: {current_pnl}, Threshold + Buffer: {threshold + buffer_margin}")
+    logger.info(f"Current PnL: {current_pnl}, Threshold + Buffer: {threshold + buffer_margin}")
 
     return current_pnl > threshold + buffer_margin
 
@@ -479,44 +462,6 @@ def _close_leg(trade: Trade, worker_cmd_queues: dict,
     worker_cmd_queues[broker].put({"action": "close_trade", "trade": trade})
     return worker_resp_queues[broker].get()
 
-
-def _protect_leg(trade: Trade, asset_conf: dict, worker_cmd_queues: dict, 
-                 worker_resp_queues: dict, factor: int = 0.3) -> Trade:
-    """
-    Attempt to add a stop loss to a trade that is already in profit.
-    """
-    if trade.side == "sell":
-        trade.new_sl = trade.entry_price - (trade.pnl / trade.lot_size) + \
-                        (asset_conf["buffer"] * factor * trade.lot_size)
-    if trade.side == "buy":
-        trade.new_sl = trade.entry_price + (trade.pnl / trade.lot_size) - \
-                        (asset_conf["buffer"] * factor * trade.lot_size)
-        
-    # No need to update if new SL is worse/only small improvement
-    if trade.status == "protected" and trade.side == "sell":
-        if trade.new_sl > trade.sl - (trade.lot_size * asset_conf["buffer"]) - \
-        asset_conf["allowed_slip"]:
-            return trade  
-    if trade.status == "protected" and trade.side == "buy":
-        if trade.new_sl < trade.sl + (trade.lot_size * asset_conf["buffer"]) + \
-        asset_conf["allowed_slip"]:
-            return trade
-        
-    worker_cmd_queues[trade.broker].put({"action": "sl_update", "trade": trade})
-    return worker_resp_queues[trade.broker].get()
-
-
-def _finalize_pnl(sell_trade: Trade, buy_trade: Trade, worker_cmd_queues: dict, 
-                 worker_resp_queues: dict) -> tuple[Trade, Trade]:
-    """
-    Finalize PnL for both legs of the trade, set close times.
-    """
-    worker_cmd_queues[sell_trade.broker].put({"action": "final_pnl", "trade": sell_trade})
-    worker_cmd_queues[buy_trade.broker].put({"action": "final", "trade": buy_trade})
-    sell_trade_resp = worker_resp_queues[sell_trade.broker].get()
-    buy_trade_resp = worker_resp_queues[buy_trade.broker].get()
-    return sell_trade_resp, buy_trade_resp
-    
 
 ############################ Broker Synchronization ############################
 def _request_broker_positions(
@@ -558,22 +503,18 @@ def _sync_arb_trades(closed_trades: list, open_trades: list,
         if not sell_open and buy_open:
             sell_tr.status = "closed"
             sell_tr.close_time = datetime.now(UTC).isoformat()
-            if buy_tr.status == "open":
-                buy_tr.status = "pending_close"
+            buy_tr.status = "pending_close"
             new_open.append((sell_tr, buy_tr))
 
         elif sell_open and not buy_open:
             buy_tr.status = "closed"
             buy_tr.close_time = datetime.now(UTC).isoformat()
-            if sell_tr.status == "open":
-                sell_tr.status = "pending_close"
+            sell_tr.status = "pending_close"
             new_open.append((sell_tr, buy_tr))
 
         elif not sell_open and not buy_open:
             sell_tr.status = "closed"
             buy_tr.status = "closed"
-            sell_tr, buy_tr = _finalize_pnl(sell_tr, buy_tr, worker_cmd_queues,
-                                             worker_resp_queues)
             sell_tr.close_time = datetime.now(UTC).isoformat()
             buy_tr.close_time = datetime.now(UTC).isoformat()
             new_closed.append((sell_tr, buy_tr))

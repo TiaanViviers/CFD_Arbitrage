@@ -29,10 +29,6 @@ def worker_proc(broker_conf, cmd_queue, resp_queue):
             _handle_pnl_batch(broker, cmd["arb_ids"], resp_queue, logger)
         elif action == "close_trade":
             _handle_close_trade(broker, cmd["trade"], resp_queue, logger)
-        elif action == "final_pnl":
-            _handle_finalize_pnl(broker, cmd["trade"], resp_queue, logger)
-        elif action == "sl_update":
-            _handle_sl_update(broker, cmd["trade"], resp_queue, logger)
         elif action == "get_open_positions":
             _handle_get_open_positions(broker, resp_queue, logger)
         elif action == "shutdown":
@@ -95,6 +91,7 @@ def _handle_open_trade(broker, trade, resp_queue) -> None:
         trade.status = "closed"
         trade.close_time = datetime.now(UTC).isoformat()
         trade.error = str(e)
+        print(f"[{broker.name}] Failed to open trade: {e}")
     resp_queue.put(trade)
 
 
@@ -136,43 +133,6 @@ def _handle_close_trade(broker, trade, resp_queue, logger) -> None:
     except Exception as e:
         trade.status = "pending_close"
         trade.error = str(e)
-    resp_queue.put(trade)
-
-
-def _handle_finalize_pnl(broker, trade, resp_queue, logger) -> None:
-    """
-    Finalize PnL for a trade, update trade object with result, put on response queue.
-    """
-    try:
-        pnl = broker.get_trade_profit(position_ticket=trade.ticket)
-        if pnl is not None:
-            trade.pnl = pnl
-    except Exception as e:
-        trade.error = str(e)
-        trade.status = "pnl_error"
-        logger.error(f"[{broker.name}] Failed to finalize PnL: {e}")
-    resp_queue.put(trade)
-
-
-def _handle_sl_update(broker, trade, resp_queue, logger) -> None:
-    """
-    Update SL for an existing trade, put updated trade on response queue.
-    """
-    try:
-        if trade.new_sl is None:
-            resp_queue.put(trade)
-
-        if broker.update_sl(trade.ticket, trade.arb_id, trade.new_sl):
-            trade.status = "protected"
-            trade.sl = trade.new_sl
-            trade.new_sl = None
-            logger.info(f"[{broker.name}] Updated SL for trade {trade.arb_id} to {trade.sl}")
-
-    except Exception as e:
-        trade.error = str(e)
-        logger.error(f"[{broker.name}] Failed to update SL: {e}")
-
-
     resp_queue.put(trade)
 
 
