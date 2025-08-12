@@ -27,20 +27,21 @@ TYPE_MAP = {'buy': mt5.ORDER_TYPE_BUY, 'sell': mt5.ORDER_TYPE_SELL}
 
 class MT5BrokerInterface:
     def __init__(self, name: str, path: str, symbol: str, logger):
-        self.name = name
-        self.path = path
-        self.symbol = symbol
-        self.logger = logger
-        self.digits = None
+        self.name          = name
+        self.path          = path
+        self.symbol        = symbol
+        self.logger        = logger
+        self.digits        = None
         self.contract_size = None
-        self.min_lot = None
-        self.leverage = None
-        self.filling_type = None
+        self.min_lot       = None
+        self.volume_step   = None
+        self.vpp           = None
+        self.leverage      = None
+        self.filling_type  = None
         self.blocked_until = None
-        self._last_price = None
-        self._lock = threading.RLock()
+        self._last_price   = None
+        self._lock         = threading.RLock()
         self.connect()
-
 
     ############################ Connection & Setup ############################
     def connect(self, max_attempts: int = 10) -> bool:
@@ -248,7 +249,8 @@ class MT5BrokerInterface:
                             f"[{self.name}] Invalid tick: no price for {side}."
                         )
                         return None
-
+                    
+                lots = self._scale_exposure(lots)
                 req = self._build_order_request(
                     side, lots, exec_price, sl, tp, deviation, magic, comment
                 )
@@ -452,6 +454,22 @@ class MT5BrokerInterface:
         return round(max(lot, self.min_lot), 2)
 
 
+    def _scale_exposure(self, lot_size: float) -> float:
+        """
+        Convert baseline $/point exposure into this broker's valid lot size.
+        Floors to volume_step; returns 0.0 if below min_lot.
+        """
+        if lot_size <= 0 or not self.vpp or self.vpp <= 0:
+            return 0.0
+        
+        step   = self.volume_step or 0.01
+        minlot = self.min_lot or step
+        raw    = lot_size / self.vpp
+        lots   = math.floor(raw / step) * step  # round down to broker step
+
+        return lots if lots >= minlot else 0.0
+
+
     def _is_in_timeout(self) -> bool:
         """
         True if broker is currently blocked.
@@ -491,14 +509,13 @@ class MT5BrokerInterface:
     def _set_symbol_info(self, info):
         """ Set symbol info attributes based on retrieved data."""
         if info is None:
-            self.logger.warning("Symbol info is None, going to default settings.")
-            self.digits        = 2
-            self.contract_size = 1.0
-            self.min_lot       = 0.01
+            self.logger.error("|| Symbol info is None, going to default settings.||")
         else:
             self.digits        = info.digits
             self.contract_size = info.trade_contract_size
             self.min_lot       = info.volume_min
+            self.volume_step   = info.volume_step
+            self.vpp           = (info.trade_tick_value / info.trade_tick_size)
 
 
     def _get_account_info(self, max_attempts: int = 5, base_delay: float = 0.5):

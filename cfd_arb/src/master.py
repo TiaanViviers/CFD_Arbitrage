@@ -197,6 +197,9 @@ def _open_available_trades(asset_config: dict, price_matrix: pd.DataFrame,
                            worker_resp_queues: dict) -> list:
     """
     Attempt to open eligible arbitrage trades based on divergence and limits.
+    Only attempts to open a single trade pair per loop, this limits slippage.
+    If a trade pair has been opened it returns and fetches fresh price updates
+    before attempting another open.
     """
     candidates = _find_divergent_pairs(price_matrix, asset_config["entry_threshold"])
     if not candidates:
@@ -222,9 +225,8 @@ def _open_available_trades(asset_config: dict, price_matrix: pd.DataFrame,
                 sell_trade, buy_trade, worker_cmd_queues, worker_resp_queues
             )
             open_trades.append(trade_pair)
-
+            return open_trades
     return open_trades
-
 
 def _find_divergent_pairs(price_matrix: pd.DataFrame, threshold: float
                     ) -> list[tuple[str, str, float]]:
@@ -429,12 +431,10 @@ def _mean_reverted(sell_trade: Trade, buy_trade: Trade, asset_conf: dict) -> boo
     Return True if the trade has mean-reverted enough to justify taking profit.
     Includes a buffer margin to account for slippage.
     """
-    current_pnl = sell_trade.pnl + buy_trade.pnl
-    threshold = asset_conf["entry_threshold"] * sell_trade.lot_size
-    buffer_margin = asset_conf["buffer"] * sell_trade.lot_size
-
-    logger.info(f"Current PnL: {current_pnl}, Threshold + Buffer: {threshold + buffer_margin}")
-
+    lot_size       = max(sell_trade.lot_size, buy_trade.lot_size)
+    current_pnl    = sell_trade.pnl + buy_trade.pnl
+    threshold      = asset_conf["entry_threshold"] * lot_size
+    buffer_margin  = asset_conf["buffer"] * lot_size
     return current_pnl > threshold + buffer_margin
 
 
