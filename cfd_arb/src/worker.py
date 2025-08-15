@@ -9,6 +9,7 @@ import logging
 import sys
 import time
 from datetime import datetime, UTC
+import math
 
 from mt5_broker import MT5BrokerInterface
 from trade import Trade
@@ -71,6 +72,7 @@ def _handle_open_trade(broker, trade, resp_queue) -> None:
     Attempt to open a trade, update trade object with result, put on response queue.
     """
     try:
+        trade.lot_size = _scale_exposure(broker, trade.lot_size)
         # Place order, with or without SL/TP
         if trade.sl is not None and trade.tp is not None:
             result = broker.place_order(
@@ -205,6 +207,22 @@ def _get_deviation(digits, allowed_slip) -> int:
         raise ValueError("Digits cannot be None when calculating deviation")
     point = 10 ** -digits
     return int(allowed_slip / point)
+
+
+def _scale_exposure(broker: MT5BrokerInterface, lot_size: float) -> float:
+        """
+        Convert baseline $/point exposure into this broker's valid lot size.
+        Floors to volume_step; returns 0.0 if below min_lot.
+        """
+        if lot_size <= 0 or not broker.vpp or broker.vpp <= 0:
+            return 0.0
+        
+        step   = broker.volume_step or 0.01
+        min_lot = broker.min_lot or step
+        raw    = lot_size / broker.vpp
+        lots   = math.floor(raw / step) * step
+
+        return lots if lots >= min_lot else 0.0
 
 
 def _setup_logger() -> logging.Logger:

@@ -27,7 +27,7 @@ JP225:
 
 US30:
   entry_threshold: 40
-  buffer: 50
+  buffer: 45
   max_divergence: 600
   capital_allocation: 0.24
   min_lot: 0.1
@@ -36,7 +36,7 @@ US30:
 
 US100:
   entry_threshold: 30
-  buffer: 40
+  buffer: 37.5
   max_divergence: 500
   capital_allocation: 0.24
   min_lot: 0.1

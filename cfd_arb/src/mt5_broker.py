@@ -249,8 +249,7 @@ class MT5BrokerInterface:
                             f"[{self.name}] Invalid tick: no price for {side}."
                         )
                         return None
-                    
-                lots = self._scale_exposure(lots)
+    
                 req = self._build_order_request(
                     side, lots, exec_price, sl, tp, deviation, magic, comment
                 )
@@ -452,22 +451,6 @@ class MT5BrokerInterface:
         step    = self.min_lot
         lot     = math.floor(raw_lot / step) * step
         return round(max(lot, self.min_lot), 2)
-
-
-    def _scale_exposure(self, lot_size: float) -> float:
-        """
-        Convert baseline $/point exposure into this broker's valid lot size.
-        Floors to volume_step; returns 0.0 if below min_lot.
-        """
-        if lot_size <= 0 or not self.vpp or self.vpp <= 0:
-            return 0.0
-        
-        step   = self.volume_step or 0.01
-        minlot = self.min_lot or step
-        raw    = lot_size / self.vpp
-        lots   = math.floor(raw / step) * step  # round down to broker step
-
-        return lots if lots >= minlot else 0.0
 
 
     def _is_in_timeout(self) -> bool:
