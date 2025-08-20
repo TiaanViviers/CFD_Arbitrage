@@ -94,7 +94,10 @@ def _handle_open_trade(broker, trade, resp_queue) -> None:
         trade.close_time = datetime.now(UTC).isoformat()
         trade.error = str(e)
         print(f"[{broker.name}] Failed to open trade: {e}")
-    resp_queue.put(trade)
+    resp_queue.put({
+        "type": "opened_trade",
+        "trade": trade,
+    })
 
 
 def _handle_pnl_batch(broker, arb_ids, resp_queue, logger) -> None:
@@ -120,7 +123,10 @@ def _handle_close_trade(broker, trade, resp_queue, logger) -> None:
     if trade.exit_price is not None or trade.close_time is not None:
         trade.status = "closed"
         trade.close_time = datetime.now(UTC).isoformat()
-        resp_queue.put(trade)
+        resp_queue.put({
+            "type": "closed_trade",
+            "trade": trade,
+        })
         return
 
     try:
@@ -135,14 +141,20 @@ def _handle_close_trade(broker, trade, resp_queue, logger) -> None:
     except Exception as e:
         trade.status = "pending_close"
         trade.error = str(e)
-    resp_queue.put(trade)
+    resp_queue.put({
+        "type": "closed_trade",
+        "trade": trade,
+    })
 
 
 def _handle_get_open_positions(broker, resp_queue, logger) -> None:
     """Put list of open positions on response queue."""
     try:
         positions = broker.get_open_positions()
-        resp_queue.put({"positions": positions})
+        resp_queue.put({
+            "type": "positions",
+            "positions": positions
+        })
     except Exception as e:
         logger.error(f"[{broker.name}] Failed to get open positions: {e}")
         resp_queue.put({"positions": []})

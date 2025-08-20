@@ -129,10 +129,11 @@ def _get_worker_ticks(worker_resp_queues: dict) -> tuple[pd.DataFrame, pd.Series
     max_lots = {}
 
     for broker, resp_q in worker_resp_queues.items():
-        resp              = resp_q.get()
-        ticks[broker]     = resp.get("tick")
-        balances[broker]  = resp.get("balance")
-        max_lots[broker]  = resp.get("max_lot", 0.0)
+        # Await a typed tick message to avoid consuming unrelated responses
+        resp = _await_dict_response(resp_q, expected_type="tick", timeout_seconds=2.0)
+        ticks[broker] = resp.get("tick")
+        balances[broker] = resp.get("balance")
+        max_lots[broker] = resp.get("max_lot", 0.0)
 
     price_matrix = _build_price_matrix(ticks)
     balances_df = pd.Series(balances, name="balance").sort_index()
@@ -170,10 +171,8 @@ def _get_pnl_update(worker_resp_queues: dict,
     for broker in requested_brokers:
         resp_q = worker_resp_queues[broker]
         try:
-            resp = resp_q.get(timeout=1)
+            resp = _await_dict_response(resp_q, expected_type="pnl_update", timeout_seconds=1.5)
             pnl_dict.update(resp.get("pnl", {}))
-        except Empty:
-            logger.warning(f"[master] no PnL response from {broker}")
         except Exception as e:
             logger.error(f"[master] error reading PnL from {broker}: {e}")
     return pnl_dict
@@ -344,8 +343,14 @@ def _place_trade_pair(sell_trade: Trade, buy_trade: Trade,
     worker_cmd_queues[sell_broker].put({"action": "open_trade", "trade": sell_trade})
     worker_cmd_queues[buy_broker].put({"action": "open_trade", "trade": buy_trade})
 
-    sell_trade_resp = worker_resp_queues[sell_broker].get()
-    buy_trade_resp = worker_resp_queues[buy_broker].get()
+    sell_trade_resp = _await_trade_response(
+        worker_resp_queues[sell_broker], expected_type="opened_trade",
+        original=sell_trade, broker_name=sell_broker, context="open"
+    )
+    buy_trade_resp = _await_trade_response(
+        worker_resp_queues[buy_broker], expected_type="opened_trade",
+        original=buy_trade, broker_name=buy_broker, context="open"
+    )
 
     if sell_trade_resp.status == "open" and buy_trade_resp.status == "open":
         logger.info(f"Trade pair opened: {sell_broker}<->{buy_broker}")
@@ -460,7 +465,10 @@ def _close_leg(trade: Trade, worker_cmd_queues: dict,
         return trade
     broker = trade.broker
     worker_cmd_queues[broker].put({"action": "close_trade", "trade": trade})
-    return worker_resp_queues[broker].get()
+    return _await_trade_response(
+        worker_resp_queues[broker], expected_type="closed_trade",
+        original=trade, broker_name=broker, context="close"
+    )
 
 
 ############################ Broker Synchronization ############################
@@ -475,12 +483,63 @@ def _request_broker_positions(
     broker_positions = {}
     for broker, resp_q in worker_resp_queues.items():
         try:
-            resp = resp_q.get()
+            resp = _await_dict_response(resp_q, expected_type="positions", timeout_seconds=2.0)
             broker_positions[broker] = resp.get("positions", [])
         except Exception as e:
             logger.error(f"[master] Failed to get positions from {broker}: {e}")
             broker_positions[broker] = []
     return broker_positions
+
+
+############################ Queue Response Helpers ############################
+def _await_dict_response(resp_q, expected_type: str, timeout_seconds: float = 2.0) -> dict:
+    """
+    Wait until a dict with the expected 'type' is received, ignoring other messages.
+    Returns the matching dict or an empty dict on timeout.
+    """
+    deadline = time.time() + timeout_seconds
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            logger.warning(f"[master] Timeout waiting for '{expected_type}' response")
+            return {}
+        try:
+            msg = resp_q.get(timeout=max(0.1, remaining))
+        except Empty:
+            continue
+        if isinstance(msg, dict) and msg.get("type") == expected_type:
+            return msg
+        # Not what we asked for; drop and continue
+        # These messages are refreshed each cycle (ticks/pnl/positions)
+        continue
+
+
+def _await_trade_response(resp_q, expected_type: str, original: Trade,
+                          broker_name: str, context: str,
+                          timeout_seconds: float = 5.0) -> Trade:
+    """
+    Wait for either a typed trade response (with 'type'==expected_type) or a bare Trade.
+    Returns the Trade or, on timeout, the original trade unchanged with a warning.
+    """
+    deadline = time.time() + timeout_seconds
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            logger.warning(
+                f"[master] Timeout waiting for {expected_type} from {broker_name} during {context}"
+            )
+            return original
+        try:
+            msg = resp_q.get(timeout=max(0.1, remaining))
+        except Empty:
+            continue
+        # Accept bare Trade for backward compatibility
+        if isinstance(msg, Trade):
+            return msg
+        if isinstance(msg, dict) and msg.get("type") == expected_type and isinstance(msg.get("trade"), Trade):
+            return msg["trade"]
+        # Else ignore and continue
+        continue
 
 
 def _sync_arb_trades(closed_trades: list, open_trades: list,
