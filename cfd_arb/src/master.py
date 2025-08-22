@@ -12,7 +12,6 @@ import numpy as np
 import math
 import uuid
 import hashlib
-import random
 import logging
 
 from telebot import TeleBot
@@ -450,7 +449,7 @@ def _min_trade_time_passed(open_time: str) -> bool:
     """
     if open_time is None:
         return False
-    min_seconds = random.randrange(180, 240)
+    min_seconds = 200
     dt_open = datetime.fromisoformat(open_time)
     now = datetime.now(UTC)
     elapsed = (now - dt_open).total_seconds()
@@ -558,7 +557,7 @@ def _clean_rogue_trades(open_trades: list, open_lim_trades: list,
 
 
 ############################ Queue Response Helpers ############################
-def _await_dict_response(resp_q, expected_type: str, timeout_seconds: float = 2.0) -> dict:
+def _await_dict_response(resp_q, expected_type: str, timeout_seconds: float = 5.0) -> dict:
     """
     Wait until a dict with the expected 'type' is received, ignoring other messages.
     Returns the matching dict or an empty dict on timeout.
