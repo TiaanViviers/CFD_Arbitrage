@@ -1,7 +1,7 @@
 BTCUSD:
   entry_threshold: 180
   buffer: 75
-  max_divergence: 1200
+  max_divergence: 1000
   capital_allocation: 0.24
   min_lot: 0.01
   allowed_slip: 10
@@ -28,7 +28,7 @@ JP225:
 US30:
   entry_threshold: 38
   buffer: 50
-  max_divergence: 600
+  max_divergence: 350
   capital_allocation: 0.24
   min_lot: 0.1
   allowed_slip: 5
@@ -37,7 +37,7 @@ US30:
 US100:
   entry_threshold: 27.5
   buffer: 42.5
-  max_divergence: 500
+  max_divergence: 350
   capital_allocation: 0.24
   min_lot: 0.1
   allowed_slip: 5
