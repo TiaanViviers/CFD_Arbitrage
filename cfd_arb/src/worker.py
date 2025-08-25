@@ -228,6 +228,8 @@ def _scale_exposure(broker: MT5BrokerInterface, lot_size: float) -> float:
         """
         if lot_size <= 0 or not broker.vpp or broker.vpp <= 0:
             return 0.0
+        if broker.vpp == 1:
+            return lot_size
         
         step   = broker.volume_step or 0.01
         min_lot = broker.min_lot or step

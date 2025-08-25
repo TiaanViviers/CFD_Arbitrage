@@ -79,10 +79,10 @@ class TeleBot:
         """Notify trade pair opened successfully."""
         lines = [
             f"🟢 Trade pair opened successfully on {self.symbol}: "
-            f"{sell_tr.broker}<->{buy_tr.broker}",
+            f"{sell_tr.broker}(s)<->{buy_tr.broker}(b)",
             "----------------",
             f"Divergence: {(sell_tr.entry_price - buy_tr.entry_price):.2f}",
-            f"Lot Size: {sell_tr.lot_size}",
+            f"Lot Size: {sell_tr.lot_size}(s), {buy_tr.lot_size}(b)",
         ]
         self._send_message("\n".join(lines))
 
