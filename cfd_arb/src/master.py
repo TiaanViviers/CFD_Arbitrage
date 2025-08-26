@@ -422,6 +422,7 @@ def _close_available_trades(open_trades: list, closed_trades: list, asset_conf: 
             updated_closed.append((sell_tr, buy_tr))
             to_remove.append(idx)
             telebot.close_trade(sell_tr, buy_tr)
+            break
 
     # Remove closed from open_trades, in reverse to avoid index shifting
     for idx in sorted(to_remove, reverse=True):

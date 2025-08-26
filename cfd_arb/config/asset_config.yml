@@ -26,7 +26,7 @@ JP225:
   lim_sl_pct: 0.0011
 
 US30:
-  entry_threshold: 38
+  entry_threshold: 40
   buffer: 50
   max_divergence: 400
   capital_allocation: 0.24
@@ -35,7 +35,7 @@ US30:
   lim_sl_pct: 0.0012
 
 US100:
-  entry_threshold: 27.5
+  entry_threshold: 30
   buffer: 42.5
   max_divergence: 400
   capital_allocation: 0.24
