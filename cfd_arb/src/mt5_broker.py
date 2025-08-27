@@ -63,6 +63,7 @@ class MT5BrokerInterface:
                         self._set_symbol_info(sym_info)
                         acc_info = self._get_account_info()
                         self._set_account_info(acc_info)
+                        print(f"{self.name} vpp: {self.vpp}")
                     return True
                 else:
                     e = mt5.last_error()
