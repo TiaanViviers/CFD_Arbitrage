@@ -13,6 +13,8 @@ import uuid
 import hashlib
 import math
 import logging
+import time
+from queue import Empty
 from datetime import datetime, UTC
 
 from trade import Trade
@@ -162,7 +164,10 @@ def _place_lim_trade(trade: Trade, worker_cmd_queues, worker_resp_queues) -> Tra
     Place a LIM trade using worker process, update status from response.
     """
     worker_cmd_queues[trade.broker].put({"action": "open_trade", "trade": trade})
-    trade_resp = worker_resp_queues[trade.broker].get()
+    trade_resp = _await_trade_response(
+        worker_resp_queues[trade.broker], expected_type="opened_trade",
+        original=trade, broker_name=trade.broker, context="open"
+    )
     if trade_resp.status == "open":
         logger.info(
             f"LIM trade opened on {trade.broker} @ {trade.lot_size} lots"
@@ -170,6 +175,32 @@ def _place_lim_trade(trade: Trade, worker_cmd_queues, worker_resp_queues) -> Tra
     else:
         logger.info(f"LIM trade failed on {trade.broker}.")
     return trade_resp
+
+
+def _await_trade_response(resp_q, expected_type: str, original: Trade,
+                          broker_name: str, context: str,
+                          timeout_seconds: float = 5.0) -> Trade:
+    """
+    Wait for either a typed trade response (with 'type'==expected_type) or a bare Trade.
+    Returns the Trade or, on timeout, the original trade unchanged with a warning.
+    """
+    deadline = time.time() + timeout_seconds
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            logger.warning(
+                f"[master] Timeout waiting for {expected_type} from {broker_name} during {context}"
+            )
+            return original
+        try:
+            msg = resp_q.get(timeout=max(0.1, remaining))
+        except Empty:
+            continue
+        if isinstance(msg, Trade):
+            return msg
+        if isinstance(msg, dict) and msg.get("type") == expected_type and isinstance(msg.get("trade"), Trade):
+            return msg["trade"]
+        continue
 
 
 ################################ LIM Sync Logic ################################
