@@ -18,7 +18,7 @@ ASSET_SCHEDULES: Dict[str, Dict[int, List[Tuple[time, time]]]] = {
         3: [(time(0, 0), time(20, 59)), (time(21, 30), time(23, 59))],
         4: [(time(0, 0), time(20, 59)), (time(21, 30), time(23, 59))],
         5: [],
-        6: [(time(19, 0), time(23, 59))],
+        6: [(time(21, 30), time(23, 59))],
     },
 
     "US30": {

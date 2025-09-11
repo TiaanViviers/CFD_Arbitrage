@@ -60,10 +60,12 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
                 asset_config, price_matrix, balances_df, maxlot_series, 
                 open_trades, worker_cmd_queues, worker_resp_queues
             )
+            """
             open_lim_trades = open_lim(
                 open_lim_trades, closed_lim_trades, closed_trades, asset_config,
                 balances_df, price_matrix, worker_cmd_queues, worker_resp_queues, telebot
             )
+            """
 
             # ---------- Trade updating ----------
             if len(open_trades) > 0:
@@ -85,10 +87,12 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
                 closed_trades, open_trades, broker_positions, worker_cmd_queues,
                 worker_resp_queues
             )
+            """
             closed_lim_trades, open_lim_trades = sync_lim_trades(
                 closed_lim_trades, open_lim_trades, broker_positions,
                 price_matrix, telebot
             )
+            """
             _clean_rogue_trades(
                 open_trades, open_lim_trades, broker_positions,
                 worker_cmd_queues, worker_resp_queues
