@@ -35,6 +35,7 @@ class TeleBot:
     def set_starting_capital(self, balances_df) -> None:
         """Set the starting capital from initial balances."""
         self.starting_capital = round(self._sum_balances(balances_df), 2)
+        print(f"[TeleBot] Starting capital set to ${self.starting_capital}")
 
 
     ################################ Core Send #################################
