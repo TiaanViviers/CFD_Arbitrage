@@ -17,8 +17,7 @@ import logging
 from telebot import TeleBot
 from trade import Trade
 import io_utils as io
-from lim import open_lim, sync_lim_trades
-from trading_schedules import is_trading_time
+from trading_schedules import is_trading_time, is_news_day
 
 logger = logging.getLogger("arbitrage_bot")
 telebot = TeleBot()
@@ -32,24 +31,25 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
 
     - Checks if market is open
     - Collects tick and balance data from workers
-    - Opens eligible arb and LIM trades
     - Closes trades that meet exit criteria
     - Syncs state with broker positions, cleans rogue trades
     """
     open_trades: list = []
     closed_trades: list = []
-    open_lim_trades: list = []
-    closed_lim_trades: list = []
     balances_df: pd.Series = {}
-    telebot.set_asset(asset)
 
     try:
+        telebot.set_asset(asset)
+        news_days = io.load_news_days()
         while True:
             # ---------- Market open check ----------
             if not is_trading_time(asset):
-                _daily_update(closed_trades, closed_lim_trades, balances_df, telebot)
+                _daily_update(closed_trades, balances_df, telebot)
                 time.sleep(10)
                 continue
+
+            if is_news_day(news_days):
+                time.sleep(1800)
 
             # ---------- Data collection ----------
             _request_worker_ticks(worker_cmd_queues)
@@ -60,12 +60,6 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
                 asset_config, price_matrix, balances_df, maxlot_series, 
                 open_trades, worker_cmd_queues, worker_resp_queues
             )
-            """
-            open_lim_trades = open_lim(
-                open_lim_trades, closed_lim_trades, closed_trades, asset_config,
-                balances_df, price_matrix, worker_cmd_queues, worker_resp_queues, telebot
-            )
-            """
 
             # ---------- Trade updating ----------
             if len(open_trades) > 0:
@@ -87,20 +81,14 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
                 closed_trades, open_trades, broker_positions, worker_cmd_queues,
                 worker_resp_queues
             )
-            """
-            closed_lim_trades, open_lim_trades = sync_lim_trades(
-                closed_lim_trades, open_lim_trades, broker_positions,
-                price_matrix, telebot
-            )
-            """
             _clean_rogue_trades(
-                open_trades, open_lim_trades, broker_positions,
+                open_trades, broker_positions,
                 worker_cmd_queues, worker_resp_queues
             )
 
     except KeyboardInterrupt:
         logger.info("Keyboard interrupt received, shutting down.")
-        io.write_closed_trades(asset, closed_trades, closed_lim_trades)
+        io.write_closed_trades(asset, closed_trades)
         _shutdown_workers(worker_cmd_queues)
         
 
@@ -537,13 +525,13 @@ def _sync_arb_trades(closed_trades: list, open_trades: list,
     return new_closed, new_open
 
 
-def _clean_rogue_trades(open_trades: list, open_lim_trades: list, 
-                        broker_positions: dict,worker_cmd_queues: dict, 
-                        worker_resp_queues: dict) -> None:
+def _clean_rogue_trades(open_trades: list, broker_positions: dict,
+                        worker_cmd_queues: dict, worker_resp_queues: dict
+                        ) -> None:
     """
     Find live broker positions whose magic IDs aren't in tracked trades, and close them.
     """
-    tracked_ids = {tr.arb_id for tr in open_lim_trades}
+    tracked_ids = {tr.arb_id for tr in open_trades}
     for sell, buy in open_trades:
         tracked_ids.add(sell.arb_id)
         tracked_ids.add(buy.arb_id)
@@ -611,12 +599,11 @@ def _await_trade_response(resp_q, expected_type: str, original: Trade,
 
 
 ############################ Daily Update ############################
-def _daily_update(closed_arb_trades: list, closed_lim_trades: list,
-                   balances: dict, telebot: TeleBot) -> None:
+def _daily_update(closed_arb_trades: list, balances: dict, telebot: TeleBot) -> None:
     """
     If time is 21:03 UTC, send a daily Telegram report.
     """
     now = datetime.now(UTC)
     if now.hour == 21 and now.minute == 3 and balances is not None:
-        telebot.daily_report(closed_arb_trades, closed_lim_trades, balances)
+        telebot.daily_report(closed_arb_trades, balances)
         time.sleep(60)

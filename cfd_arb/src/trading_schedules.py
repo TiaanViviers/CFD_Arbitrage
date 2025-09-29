@@ -85,3 +85,14 @@ def is_trading_time(asset: str) -> bool:
 
     day_schedule = ASSET_SCHEDULES[asset].get(weekday, [])
     return any(start <= now_time <= end for start, end in day_schedule)
+
+
+def is_news_day(news_days: set) -> bool:
+    """
+    Returns True if today is a high-impact news day.
+
+    Args:
+        news_days: Set of dates (YYYY-MM-DD) that are high-impact news days.
+    """
+    today = datetime.now(UTC).date()
+    return today in news_days

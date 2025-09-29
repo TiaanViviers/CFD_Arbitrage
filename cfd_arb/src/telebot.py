@@ -49,9 +49,7 @@ class TeleBot:
 
 
     ############################# Message Builders #############################
-    def daily_report(
-        self, closed_arbs: list, closed_lims: list, balances: dict[str, float]
-    ) -> None:
+    def daily_report(self, closed_arbs: list, balances: dict[str, float]) -> None:
         """Send a daily summary."""
         lines = [
             f"📈 Daily Report for {self.symbol}",

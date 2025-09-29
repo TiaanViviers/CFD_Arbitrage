@@ -93,37 +93,6 @@
     ]
   },
   {
-    "broker": "eightcap",
-    "terminal_path": "C:/MT5/Eightcap/terminal64.exe",
-    "symbols": [
-      {
-        "internal": "BTCUSD",
-        "broker_symbol": "BTCUSD",
-        "type": "crypto"
-      },
-      {
-        "internal": "US100",
-        "broker_symbol": "NDX100",
-        "type": "index.us"
-      },
-      {
-        "internal": "US30",
-        "broker_symbol": "US30",
-        "type": "index.us"
-      },
-      {
-        "internal": "GER40",
-        "broker_symbol": "GER40",
-        "type": "index.eu"
-      },
-      {
-        "internal": "JP225",
-        "broker_symbol": "JPN225",
-        "type": "index.as"
-      }
-    ]
-  },
-  {
     "broker": "xm",
     "terminal_path": "C:/MT5/XM/terminal64.exe",
     "symbols": [

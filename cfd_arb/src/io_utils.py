@@ -2,6 +2,7 @@ import os
 import json
 import yaml
 import csv
+import datetime
 from typing import Any, List, Dict
 
 # --- Constants ---
@@ -88,13 +89,30 @@ def load_asset_config(asset: str) -> dict[str, Any]:
     return config[asset]
 
 
-def write_closed_trades(asset: str, arb_trades: List[tuple], lim_trades: List[Any]) -> None:
+def load_news_days() -> set:
+    """
+    Read FOMC news days from config/fomc.csv.
+
+    Returns:
+        Set of datetime dates (no time) when FOMC news releases occur.
+    """
+    news_days = set()
+    file = os.path.join(CONFIG_DIR, "fomc.txt")
+    with open(file, "r") as f:
+        data = f.read().splitlines()
+        for line in data:
+            date = line.split(",")[0]
+            news_days.add(datetime.datetime.strptime(date, "%Y.%m.%d").date())
+
+    return news_days
+
+
+def write_closed_trades(asset: str, arb_trades: List[tuple]) -> None:
     """Append closed trades to the CSV file for the given asset.
 
     Args:
         asset: Asset symbol (used as filename).
         arb_trades: List of (sell, buy) tuples.
-        lim_trades: List of single-leg trades.
     """
     filename = os.path.join(DATA_DIR, f"{asset}.csv")
     file_exists = os.path.exists(filename)
@@ -109,7 +127,3 @@ def write_closed_trades(asset: str, arb_trades: List[tuple], lim_trades: List[An
         for sell, buy in arb_trades:
             for trade in (sell, buy):
                 writer.writerow({f: getattr(trade, f, None) for f in TRADE_FIELDNAMES})
-
-        # Write lim trades (single-leg)
-        for trade in lim_trades:
-            writer.writerow({f: getattr(trade, f, None) for f in TRADE_FIELDNAMES})
