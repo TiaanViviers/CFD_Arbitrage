@@ -54,6 +54,8 @@ def master_proc(asset: str, asset_config: dict, worker_cmd_queues: dict,
             # ---------- Data collection ----------
             _request_worker_ticks(worker_cmd_queues)
             price_matrix, balances_df, maxlot_series = _get_worker_ticks(worker_resp_queues)
+            if telebot.starting_capital is None:
+                telebot.set_starting_capital(balances_df)
 
             # ---------- Trade opening ----------
             open_trades = _open_available_trades(
