@@ -114,23 +114,11 @@ class TeleBot:
 
     ############################# Update Helpers ###############################
     def _sum_balances(self, balances) -> float:
-        """Sum balances dictionary/Series, ignoring None and NaN."""
-        try:
-            values = balances.values()
-        except AttributeError:
-            values = balances
-
+        """Sum balances dict/Series/iterable, ignoring None and NaN."""
         total = 0.0
-        for v in values:
-            if v is None:
-                continue
-            try:
-                fv = float(v)
-            except Exception:
-                continue
-            if fv != fv:  # NaN check
-                continue
-            total += fv
+        for _, bal in balances.items():
+            total += bal if bal is not None else 0.0
+
         return total
     
 
