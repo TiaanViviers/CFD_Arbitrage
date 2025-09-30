@@ -35,7 +35,7 @@ class TeleBot:
     def set_starting_capital(self, balances_df) -> None:
         """Set the starting capital from initial balances."""
         starting_cap = round(self._sum_balances(balances_df), 2)
-        if starting_cap:
+        if starting_cap > 0:
             self.starting_capital = starting_cap
             print(f"[TeleBot] Starting capital set to ${self.starting_capital}")
 
