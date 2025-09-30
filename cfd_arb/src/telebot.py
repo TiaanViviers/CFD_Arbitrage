@@ -147,13 +147,12 @@ class TeleBot:
         return arbs
     
 
-    def _get_broker_pnl(self, broker, closed_arbs, closed_lims):
+    def _get_broker_pnl(self, broker, closed_arbs):
         """
         Calculate total PnL for a specific broker.
         Args:
             broker: Broker name to filter trades
             closed_arbs: List of closed arbitrage trade pairs
-            closed_lims: List of closed limit trades
         Returns:
             float: Total PnL for the broker
         """
@@ -163,10 +162,6 @@ class TeleBot:
                 total_pnl += pair[0].pnl
             elif pair[1].broker == broker and pair[1].pnl is not None:
                 total_pnl += pair[1].pnl
-        
-        for trade in closed_lims:
-            if trade.broker == broker and trade.pnl is not None:
-                total_pnl += trade.pnl
         
         return total_pnl
 
