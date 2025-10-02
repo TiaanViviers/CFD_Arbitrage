@@ -533,7 +533,7 @@ def _clean_rogue_trades(open_trades: list, broker_positions: dict,
     """
     Find live broker positions whose magic IDs aren't in tracked trades, and close them.
     """
-    tracked_ids = {}
+    tracked_ids = set()
     for sell, buy in open_trades:
         tracked_ids.add(sell.arb_id)
         tracked_ids.add(buy.arb_id)
