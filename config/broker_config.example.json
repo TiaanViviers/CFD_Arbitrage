@@ -1,7 +1,7 @@
 [
   {
     "broker": "icmarkets",
-    "terminal_path": "C:/MT5/ICMarkets/terminal64.exe",
+    "terminal_path": "C:/path/to/ICMarkets/terminal64.exe",
     "symbols": [
       {
         "internal": "BTCUSD",
@@ -32,7 +32,7 @@
   },
   {
     "broker": "exness",
-    "terminal_path": "C:/MT5/Exness/terminal64.exe",
+    "terminal_path": "C:/path/to/Exness/terminal64.exe",
     "symbols": [
       {
         "internal": "BTCUSD",
@@ -63,7 +63,7 @@
   },
   {
     "broker": "fxtm",
-    "terminal_path": "C:/MT5/FXTM/terminal64.exe",
+    "terminal_path": "C:/path/to/FXTM/terminal64.exe",
     "symbols": [
       {
         "internal": "BTCUSD",
@@ -72,8 +72,8 @@
       },
       {
         "internal": "US100",
-          "broker_symbol": "NAS100",
-          "type": "index.us"
+        "broker_symbol": "NAS100",
+        "type": "index.us"
       },
       {
         "internal": "US30",
@@ -94,7 +94,7 @@
   },
   {
     "broker": "xm",
-    "terminal_path": "C:/MT5/XM/terminal64.exe",
+    "terminal_path": "C:/path/to/XM/terminal64.exe",
     "symbols": [
       {
         "internal": "BTCUSD",

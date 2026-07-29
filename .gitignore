@@ -1,6 +1,10 @@
 #editor side products
 .vscode
 
+# Local secrets and machine-specific config (never commit)
+.env
+config/broker_config.json
+
 #data files
 *.csv
 

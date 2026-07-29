@@ -35,6 +35,12 @@ def load_broker_config(asset: str) -> List[Dict[str, Any]]:
         json.JSONDecodeError: If the file isn't valid JSON.
     """
     asset = asset.upper()
+    if not os.path.exists(BROKER_CONFIG):
+        example = os.path.join(CONFIG_DIR, "broker_config.example.json")
+        raise FileNotFoundError(
+            f"Missing {BROKER_CONFIG}. Copy {example} to broker_config.json "
+            "and set your local MetaTrader 5 terminal paths."
+        )
     with open(BROKER_CONFIG, "r", encoding="utf-8") as f:
         config = json.load(f)
 

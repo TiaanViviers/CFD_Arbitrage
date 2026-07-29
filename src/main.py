@@ -8,6 +8,13 @@ Entrypoint for the CFD Arbitrage trading system.
 - Launches master process, then gracefully shuts down workers
 """
 
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load secrets before importing modules that read env (e.g. TeleBot).
+load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+
 import sys
 import time
 import logging

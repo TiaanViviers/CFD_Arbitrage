@@ -1,3 +1,4 @@
+import os
 import threading
 from datetime import datetime, UTC, timedelta
 import requests
@@ -9,17 +10,26 @@ class TeleBot:
     """
     Minimal Telegram Bot for logging and alerts from CFD Arbitrage system.
     Thread-safe for multi-process usage. No Markdown formatting.
+
+    Credentials are loaded from environment variables (never hardcoded):
+      TELEGRAM_BOT_TOKEN  — BotFather token
+      TELEGRAM_CHAT_ID    — destination chat / group id
     """
 
     ############################### Init & State ###############################
     def __init__(self) -> None:
         self.symbol: str = ''
         self.starting_capital = None
-        self.token: str = (
-            "8057200194:AAHYTBORzzAcMEE2KQ2CmDmFyJSE1VtYjFw"
-        )
-        self.chat_id: int = -4940676347
+        self.token: str = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+        chat_id_raw = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+        self.chat_id: int | None = int(chat_id_raw) if chat_id_raw else None
+        self._enabled = bool(self.token and self.chat_id is not None)
         self._lock = threading.Lock()
+        if not self._enabled:
+            print(
+                "[TeleBot] TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set; "
+                "alerts disabled. See .env.example."
+            )
 
 
     ################################ Utilities #################################
@@ -43,10 +53,10 @@ class TeleBot:
     ################################ Core Send #################################
     def _send_message(self, message: str) -> None:
         """Send plain text message to Telegram group."""
+        if not self._enabled:
+            return
         with self._lock:
-            url = (
-                f"https://api.telegram.org/bot{self.token}/sendMessage"
-            )
+            url = f"https://api.telegram.org/bot{self.token}/sendMessage"
             payload = {"chat_id": self.chat_id, "text": message}
             try:
                 resp = requests.post(url, data=payload, timeout=3)
